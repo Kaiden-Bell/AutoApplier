@@ -31,7 +31,6 @@ def compile_latex_to_pdf(file, log_dir="output/logs/LaTeX_logs", pdf_dir="output
     except subprocess.CalledProcessError as e:
         print(f"Error compiling LaTeX: {e}")
 
-
 if __name__ == "__main__":
     file = 'cv.tex'
     compile_latex_to_pdf(file)
