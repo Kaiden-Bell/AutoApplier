@@ -1,0 +1,71 @@
+\\documentclass[10pt,a4paper]{article}
+\\usepackage[margin=0.55in]{geometry}
+\\usepackage[T1]{fontenc}
+\\usepackage[utf8]{inputenc}
+\\usepackage{enumitem}
+\\usepackage[hidelinks]{hyperref}
+\\usepackage{titlesec}
+\\usepackage{array}
+\\pagenumbering{gobble}
+\\setlist[itemize]{leftmargin=*,noitemsep,topsep=0pt,parsep=0pt,partopsep=0pt}
+\\titleformat{\\section}{\\large\\bfseries}{}{0em}{}[\\vspace{-0.35em}\\hrule]
+\\titlespacing*{\\section}{0pt}{0.45em}{0.25em}
+\\begin{document}
+\\begin{center}
+    {\\LARGE \\textbf{Candidate Name}}\\\\
+    \\vspace{0.15em}
+    \\href{mailto:email@example.com}{email@example.com} $\\cdot$ (xxx) xxx-xxxx $\\cdot$ City, State $\\cdot$ \\href{https://linkedin.com/in/username}{linkedin.com/in/username} $\\cdot$ \\href{https://github.com/username}{github.com/username}
+\\end{center}
+\\vspace{-0.5em}
+\\section*{Education}
+\\textbf{Computer Science and Engineering Coursework} \\hfill \\textit{Current}
+\\begin{itemize}
+    \\item Relevant coursework: Data Structures and Algorithms, Analysis of Algorithms, Discrete Mathematics, Database Management Systems, Computer Organization \\& Architecture, Introduction to Machine Learning, Programming Language Concepts.
+    \\item Additional technical coursework: Embedded Systems, Digital Design, Circuits, Probability and Statistics, Linear Algebra, Differential Equations.
+\\end{itemize}
+\\section*{Technical Skills}
+\\begin{itemize}
+    \\item \\textbf{Languages:} C, C++, Python, Java, JavaScript, TypeScript, SQL, ARM Assembly
+    \\item \\textbf{Backend \\& Tools:} FastAPI, Node.js, REST APIs, PostgreSQL, Git/GitHub, Linux, Docker, AWS EC2, Uvicorn
+    \\item \\textbf{Frontend:} React, HTML, CSS, Tailwind CSS
+    \\item \\textbf{Systems \\& Security:} Embedded C, UART/pySerial, bitwise manipulation, memory management, Argon2id, XChaCha20-Poly1305
+    \\item \\textbf{ML:} Feature engineering, model evaluation, PyTorch
+\\end{itemize}
+\\section*{Projects}
+\\textbf{The Vault --- Hardware-Gated Encrypted Password Manager} \\hfill \\textit{Python, Arduino C, HTML/CSS, JavaScript}
+\\begin{itemize}
+    \\item Built a hardware-assisted authentication system using an Arduino Mega, matrix keypad, LEDs, and Python backend communication over UART.
+    \\item Engineered secure backend services with FastAPI, PostgreSQL, Argon2id, and XChaCha20-Poly1305 for encrypted credential storage and session state.
+    \\item Separated hardware access control from cryptographic key management to keep sensitive keys and credentials off embedded hardware.
+\\end{itemize}
+\\textbf{ARMv7 Instruction-Level Emulator} \\hfill \\textit{C++}
+\\begin{itemize}
+    \\item Built an ARMv7 emulator modeling registers, instruction decoding, execution flow, and memory state transitions.
+    \\item Implemented opcode parsing and arithmetic/logic execution for multiple instruction categories.
+\\end{itemize}
+\\textbf{Embedded Swamp Cooler Control System} \\hfill \\textit{Arduino C}
+\\begin{itemize}
+    \\item Designed a real-time embedded control system using sensors, ADC readings, timers, interrupts, and state transitions.
+    \\item Performed hardware debugging and modularized the system for maintainability and reliability.
+\\end{itemize}
+\\textbf{RLPredictor: ML Esports Data Pipeline \\& Prediction Engine} \\hfill \\textit{Python, PyTorch}
+\\begin{itemize}
+    \\item Built an end-to-end data pipeline integrating web scraping, API data, and sentiment analysis into a 13-feature dataset.
+    \\item Trained a PyTorch neural network for prediction and developed preprocessing workflows for normalization and temporal analysis.
+\\end{itemize}
+\\section*{Experience}
+\\textbf{Independent IT \\& Systems Technician} \\hfill \\textit{Self-Employed | 2025--Present}
+\\begin{itemize}
+    \\item Diagnosed and resolved hardware, firmware, and OS-level issues across diverse client systems.
+    \\item Performed secure system hardening, component-level troubleshooting, and reliability optimization.
+\\end{itemize}
+\\textbf{Freelance Web \\& Systems Developer} \\hfill \\textit{2024--Present}
+\\begin{itemize}
+    \\item Designed and deployed full-stack production websites with backend APIs and database integration.
+    \\item Managed hosting environments and domain configuration.
+\\end{itemize}
+\\section*{Additional}
+\\begin{itemize}
+    \\item Coursework and projects demonstrate experience with software development, data structures/algorithms, Linux environments, web development, embedded systems, and ML.
+\\end{itemize}
+\\end{document}

@@ -1,0 +1,147 @@
+[SKILLS]
+Languages
+C, C++, Python, Java, JavaScript, TypeScript, SQL, ARM Assembly
+Backend & APIs
+FastAPI, Node.js
+REST API design and development
+Authentication and session management
+Serial communication (UART/pySerial)
+Frontend
+React
+HTML, CSS, JavaScript, TypeScript
+Tailwind CSS
+Databases
+PostgreSQL
+Relational database design
+Systems Programming
+Bitwise manipulation
+Memory management
+Instruction decoding and CPU simulation
+ARMv7 architecture
+Embedded Systems
+Embedded C
+State-machine design
+UART communication
+ADCs, timers, and interrupts
+Breadboard prototyping
+Hardware debugging
+Security
+Argon2id
+Authenticated encryption (XChaCha20-Poly1305)
+Secure authentication workflows
+Tools
+Git/GitHub
+Linux
+Docker
+AWS EC2
+Uvicorn
+Machine Learning
+Feature engineering
+Model evaluation
+
+[PROJECTS]
+**Embedded Swamp Cooler Control System (Arduino C)**
+Designed and implemented a full embedded control system using breadboarded circuitry, environmental sensors,
+and actuator control.
+Developed real-time control logic in C utilizing ADC readings, timers, interrupt service routines, and conditional
+state transitions.
+Implemented modular system architecture for maintainability and reliability.
+Performed hardware debugging to resolve sensor noise, signal stability, and integration issues.
+
+**ARMv7 Instruction-Level Emulator (C++)**
+Built a functional ARMv7 emulator modeling registers, instruction decoding, execution pipeline, and memory
+state transitions.
+Implemented opcode parsing and execution logic for multiple instruction categories.
+Simulated program counter updates, arithmetic/logic operations, and memory access instructions.
+Designed an emulator as a learning tool for understanding assembly and processor architecture.
+Secure Password Manager v1.0 (Python)
+Developed a secure credential storage system emphasizing encryption, integrity verification, and safe memory
+handling.
+Applied system-level security design principles and defensive programming practices.
+Focused on minimizing attack surface and improving secure memory management.
+
+**The Vault — Hardware-Gated Encrypted Password Manager v2.0 (Python, Arduino C, HTML/CSS,
+JavaScript)**
+Developed a hardware-assisted authentication system using an Arduino Mega, 4Ö4 matrix keypad, and status
+LEDs, communicating with a Python backend over UART serial (pyserial) for secure access control.
+Designed and implemented firmware to scan keypad input, transmit authentication requests, and provide real-
+time hardware feedback while keeping all cryptographic operations isolated to the backend.
+Built a layered authentication architecture separating hardware access control from cryptographic key manage-
+ment, preventing sensitive keys or credentials from being exposed to embedded hardware.
+Engineered secure backend services using FastAPI, PostgreSQL, Argon2id, and XChaCha20-Poly1305 to manage
+encrypted credential storage, session state, and hardware authorization.
+
+**RLPredictor: ML Esports Data Pipleine & Prediction Engine (Python)**
+Designed and implemented an end-to-end data pipeline integrating multiple external sources such as Liquipedia
+(web scraping), Ballchasing API (replay data), and Reddit sentiment analysis.
+Engineered a 13-feature dataset combining historical performance, head-to-head statistics, player momentum,
+and public sentiment for predictive modeling.
+Built and trained a PyTorch-based neural network to generate predictions for player performance metrics.
+Developed data preprocessing workflows for structured extraction, normalization, and temporal analysis across
+large replay datasets.
+Implemented a conversational CLI interface to translate outputs into readable explanations, combining statistical
+inference with logic.
+Designed a self-supervised training pipeline that generates labeled training data from historical replays, enabling
+continuous model improvement.
+
+**Minecraft “Random Events” Server Plugin (Java)**
+Developed a modular server plugin implementing event-driven gameplay mechanics.
+Applied object-oriented programming principles and server-side state management.
+Integrated persistent score tracking and configurable gameplay logic.
+
+[WORK HISTORY]
+
+**Independent IT & Systems Technician — Self-Employed 2025 – Present**
+Diagnosed and resolved hardware, firmware, and OS-level issues across diverse client systems.
+Performed component-level troubleshooting and system configuration.
+Conducted secure system hardening and reliability optimization.
+
+**Freelance Web & Systems Developer 2024 – Present**
+Designed and deployed full-stack production websites including backend APIs and database integration.
+Managed hosting environments and domain configuration.
+
+**NSHE — Circulation Senior Worker 2023 – Present**
+Contributed to the efficient functioning of the Knowledge Center by assisting patrons with book-related queries.
+Enhanced communication skills while working in a collaborative and service-oriented environment.
+
+**Hidden Valley CC — Event Specialist 2021 – 2023**
+Organized and executed various events.
+Led meticulous event setup, ensuring seamless event execution.
+Developed strong organizational and communication skills while contributing to the success of diverse events.
+
+**Chillworks LLC — Shift Leader 2018 – 2021**
+Develop Dairy Queen’s treats in a safe, communicative environment
+Communicate with co-workers to successfully deliver dairy queen products.
+Successfully fulfill customers’ orders, needs, requests, and more.
+
+[EDUCATION]
+
+Embedded & Electrical Systems
+CPE 301 – Embedded Systems (micro-controller design, ADC, timers, interrupts, debugging)
+CPE 201 – Digital Design (logic gates, combinational/sequential circuits, breadboarding)
+EE 220 – Circuits I (nodal analysis, KCL/KVL, dependent sources, resistor networks)
+Computer Architecture & Systems
+CS 219 – Computer Organization & Architecture (assembly, Boolean algebra, bitwise ops)
+CS 326 – Programming Language Concepts (syntax, grammars, Prolog)
+CS 456 – Automata and Formal Languages (Advanced syntaxes, and grammars)
+Algorithms & Theory
+CS 365 – Discrete Mathematics
+CS 477 – Analysis of Algorithms
+CS 302 – Data Structures and Algorithms
+Mathematics & Physics
+MATH 181 – Calculus 1
+MATH 182 – Calculus 2
+MATH 283 – Calculus 3
+MATH 285 – Differential Equations
+MATH 330 – Linear Algebra
+STAT 352 – Probability and Statistics
+PHYS 180 – Physics for Scientists and Engineers I
+PHYS 181 – Physics for Scientists and Engineers II
+Data & Intelligent Systems
+CS 457 – Database Management Systems
+CS 420 – Computer-Human Interaction
+CS 422 – Introduction to Machine Learning
+Engineering Communication & Leadership
+ENGR 100 – Soldering, technical communication, leadership fundamentals
+ENGR 301 – Team-based project management and engineering communication
+
