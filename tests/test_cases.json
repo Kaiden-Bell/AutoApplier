@@ -1,0 +1,128 @@
+[
+  {
+    "name": "TC01: Exact Match (Standard Salary)",
+    "payload": {
+      "title": "Software Engineer",
+      "location": "Reno, NV",
+      "pay_text": "$85,000 - $105,000 / year"
+    },
+    "expected": true
+  },
+  {
+    "name": "TC02: Alternate Token Match (Standard Hourly)",
+    "payload": {
+      "title": "Embedded Systems Intern",
+      "location": "Sparks, NV",
+      "pay_text": "$35.00 - $42.50 / hr"
+    },
+    "expected": true
+  },
+  {
+    "name": "TC03: Modern Title Suffix (Remote Annual)",
+    "payload": {
+      "title": "Firmware Developer I",
+      "location": "Remote - US",
+      "pay_text": "Salary range: $90,000 to $115,000"
+    },
+    "expected": true
+  },
+  {
+    "name": "TC04: Fullstack Title Token (Hybrid Salary)",
+    "payload": {
+      "title": "Junior Fullstack Engineer",
+      "location": "Carson City, NV (Hybrid)",
+      "pay_text": "Starting at $75,000 annually"
+    },
+    "expected": true
+  },
+  {
+    "name": "TC05: Multiple Cities in Text (Local Radius)",
+    "payload": {
+      "title": "Backend Systems Developer",
+      "location": "Incline Village, Tahoe, NV",
+      "pay_text": "Estimated compensation: $80k - $95k"
+    },
+    "expected": true
+  },
+  {
+    "name": "TC06: Single-Word Hourly Target (Low Range Pass)",
+    "payload": {
+      "title": "SWE",
+      "location": "Reno",
+      "pay_text": "$25.00/hour"
+    },
+    "expected": true
+  },
+  {
+    "name": "TC07: FAIL - Blacklisted Seniority (Title Override)",
+    "payload": {
+      "title": "Senior Embedded Software Engineer",
+      "location": "Reno, NV",
+      "pay_text": "$140,000 - $170,000"
+    },
+    "expected": false
+  },
+  {
+    "name": "TC08: FAIL - Alternate Senior Token (Title Override)",
+    "payload": {
+      "title": "Principal Firmware Architect",
+      "location": "Remote",
+      "pay_text": "$190,000"
+    },
+    "expected": false
+  },
+  {
+    "name": "TC09: FAIL - Completely Wrong Engineering Track",
+    "payload": {
+      "title": "Civil Engineer / Project Designer",
+      "location": "Reno, NV",
+      "pay_text": "$85,000"
+    },
+    "expected": false
+  },
+  {
+    "name": "TC10: FAIL - Adjacent Field Without Target Tokens",
+    "payload": {
+      "title": "Data Scientist / Machine Learning Analyst",
+      "location": "Remote",
+      "pay_text": "$110,000"
+    },
+    "expected": false
+  },
+  {
+    "name": "TC11: FAIL - Outside Location Radius",
+    "payload": {
+      "title": "Software Engineer II",
+      "location": "Las Vegas, NV",
+      "pay_text": "$95,000"
+    },
+    "expected": false
+  },
+  {
+    "name": "TC12: FAIL - Unrelated City (Out of State)",
+    "payload": {
+      "title": "Hardware Engineer",
+      "location": "San Francisco, CA",
+      "pay_text": "$120,000"
+    },
+    "expected": false
+  },
+  {
+    "name": "TC13: FAIL - Hourly Under Target Threshold",
+    "payload": {
+      "title": "Web Developer Intern",
+      "location": "Sparks, NV",
+      "pay_text": "$15.00 - $18.50 per hour"
+    },
+    "expected": false
+  },
+  {
+    "name": "TC14: FAIL - Annual Salary Under Target Threshold",
+    "payload": {
+      "title": "Junior Software Developer",
+      "location": "Reno, NV",
+      "pay_text": "$45,000 - $55,000 a year"
+    },
+    "expected": false
+  }
+]
