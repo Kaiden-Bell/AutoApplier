@@ -1,127 +1,109 @@
 [
   {
-    "name": "TC01: Exact Match (Standard Salary)",
+    "name": "TC01: Valid - Frontend Cloud Focus (Reno Local)",
     "payload": {
-      "title": "Software Engineer",
+      "title": "Cloud Frontend Developer",
       "location": "Reno, NV",
-      "pay_text": "$85,000 - $105,000 / year"
+      "pay": "$45.00 / hr"
     },
     "expected": true
   },
   {
-    "name": "TC02: Alternate Token Match (Standard Hourly)",
+    "name": "TC02: Valid - DevOps Target Token (Henderson Hybrid)",
     "payload": {
-      "title": "Embedded Systems Intern",
+      "title": "Junior DevOps Engineer",
+      "location": "Henderson, NV (Hybrid)",
+      "pay": "Salary: $65,000 / year"
+    },
+    "expected": true
+  },
+  {
+    "name": "TC03: Valid - Cyber Security Focus (Las Vegas Base)",
+    "payload": {
+      "title": "Entry Level Cybersecurity Analyst",
+      "location": "Las Vegas, Nevada",
+      "pay": "$32.50 per hour"
+    },
+    "expected": true
+  },
+  {
+    "name": "TC04: Valid - Networking Token (Remote Standard)",
+    "payload": {
+      "title": "Networking Infrastructure Assistant",
+      "location": "Remote (US/Canada)",
+      "pay": "$55,000 annually"
+    },
+    "expected": true
+  },
+  {
+    "name": "TC05: Valid - Database Track (Sparks Low Wage Pass)",
+    "payload": {
+      "title": "Database Administrator Specialist",
       "location": "Sparks, NV",
-      "pay_text": "$35.00 - $42.50 / hr"
+      "pay": "$16.50/hr"
     },
     "expected": true
   },
   {
-    "name": "TC03: Modern Title Suffix (Remote Annual)",
+    "name": "TC06: Valid - Mobile Token (Tahoe Edge Salary Pass)",
     "payload": {
-      "title": "Firmware Developer I",
-      "location": "Remote - US",
-      "pay_text": "Salary range: $90,000 to $115,000"
+      "title": "Mobile App Developer",
+      "location": "South Lake Tahoe",
+      "pay": "Starting at $35,000"
     },
     "expected": true
   },
   {
-    "name": "TC04: Fullstack Title Token (Hybrid Salary)",
+    "name": "TC07: FAIL - Banned Roman Numeral Suffix II",
     "payload": {
-      "title": "Junior Fullstack Engineer",
-      "location": "Carson City, NV (Hybrid)",
-      "pay_text": "Starting at $75,000 annually"
-    },
-    "expected": true
-  },
-  {
-    "name": "TC05: Multiple Cities in Text (Local Radius)",
-    "payload": {
-      "title": "Backend Systems Developer",
-      "location": "Incline Village, Tahoe, NV",
-      "pay_text": "Estimated compensation: $80k - $95k"
-    },
-    "expected": true
-  },
-  {
-    "name": "TC06: Single-Word Hourly Target (Low Range Pass)",
-    "payload": {
-      "title": "SWE",
-      "location": "Reno",
-      "pay_text": "$25.00/hour"
-    },
-    "expected": true
-  },
-  {
-    "name": "TC07: FAIL - Blacklisted Seniority (Title Override)",
-    "payload": {
-      "title": "Senior Embedded Software Engineer",
+      "title": "Fullstack Software Engineer II",
       "location": "Reno, NV",
-      "pay_text": "$140,000 - $170,000"
+      "pay": "$95,000"
     },
     "expected": false
   },
   {
-    "name": "TC08: FAIL - Alternate Senior Token (Title Override)",
+    "name": "TC08: FAIL - Banned Roman Numeral Suffix III",
     "payload": {
-      "title": "Principal Firmware Architect",
+      "title": "Embedded Firmware Developer III",
       "location": "Remote",
-      "pay_text": "$190,000"
+      "pay": "$115,000"
     },
     "expected": false
   },
   {
-    "name": "TC09: FAIL - Completely Wrong Engineering Track",
+    "name": "TC11: FAIL - Out of State Location Mismatch",
     "payload": {
-      "title": "Civil Engineer / Project Designer",
+      "title": "Web Application Developer",
+      "location": "Phoenix, AZ",
+      "pay": "$75,000"
+    },
+    "expected": false
+  },
+  {
+    "name": "TC10: FAIL - Missing Target Tokens Completely",
+    "payload": {
+      "title": "Technical Customer Support Representative",
       "location": "Reno, NV",
-      "pay_text": "$85,000"
+      "pay": "$22.00 / hour"
     },
     "expected": false
   },
   {
-    "name": "TC10: FAIL - Adjacent Field Without Target Tokens",
+    "name": "TC11: FAIL - Hourly Wage Below Modified Limits",
     "payload": {
-      "title": "Data Scientist / Machine Learning Analyst",
-      "location": "Remote",
-      "pay_text": "$110,000"
-    },
-    "expected": false
-  },
-  {
-    "name": "TC11: FAIL - Outside Location Radius",
-    "payload": {
-      "title": "Software Engineer II",
-      "location": "Las Vegas, NV",
-      "pay_text": "$95,000"
-    },
-    "expected": false
-  },
-  {
-    "name": "TC12: FAIL - Unrelated City (Out of State)",
-    "payload": {
-      "title": "Hardware Engineer",
-      "location": "San Francisco, CA",
-      "pay_text": "$120,000"
-    },
-    "expected": false
-  },
-  {
-    "name": "TC13: FAIL - Hourly Under Target Threshold",
-    "payload": {
-      "title": "Web Developer Intern",
+      "title": "Software Engineering Tutor",
       "location": "Sparks, NV",
-      "pay_text": "$15.00 - $18.50 per hour"
+      "pay": "$12.00 / hr"
     },
     "expected": false
   },
   {
-    "name": "TC14: FAIL - Annual Salary Under Target Threshold",
+    "name": "TC12: FAIL - Annual Salary Below Modified Limits",
     "payload": {
-      "title": "Junior Software Developer",
-      "location": "Reno, NV",
-      "pay_text": "$45,000 - $55,000 a year"
+      "title": "Junior QA Manual Tester",
+      "location": "Remote",
+      "pay": "Stipend: $24,000 / year"
     },
     "expected": false
   }

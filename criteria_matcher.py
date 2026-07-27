@@ -20,7 +20,6 @@ def eval_job_criteria(scraped_job, criteria_path="criteria.json"):
     location = scraped_job.get("location", "").lower()
     pay_txt = scraped_job.get("pay", "").lower()
 
-
     if any(token in title for token in lim["banned_tokens"]):
         return False, f"Job title contains banned token(s): {', '.join([token for token in lim['banned_tokens'] if token in title])}"
 
