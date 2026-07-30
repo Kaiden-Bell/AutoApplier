@@ -1,17 +1,24 @@
 import json
 import re
+import os
 
-def eval_job_criteria(scraped_job, criteria_path="criteria.json"):
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def eval_job_criteria(scraped_job, criteria_path=None):
     """
         Desc:
             This function evaluates a scraped job description against a set of criteria defined in a JSON file.
-
         Args:
             scraped_job (dict): A dictionary containing the job description and other relevant information.
             criteria_path (str): The path to the JSON file containing the evaluation criteria.
         Returns:
             bool: True if the job meets the criteria, False otherwise.    
     """
+    
+    if criteria_path is None:
+        criteria_path = os.path.join(BASE_DIR, "criteria.json")
+    elif not os.path.isabs(criteria_path):
+        criteria_path = os.path.join(BASE_DIR, criteria_path)
 
     with open(criteria_path, "r") as f:
         lim = json.load(f)
@@ -44,7 +51,6 @@ def eval_job_criteria(scraped_job, criteria_path="criteria.json"):
         else:
             if max_pay < lim["minimum_annual_salary"]:
                 return False, f"Job salary ${max_pay}/yr is below the minimum annual salary of ${lim['minimum_annual_salary']}/yr"
-
 
     return True, "Job meets all criteria"
 
