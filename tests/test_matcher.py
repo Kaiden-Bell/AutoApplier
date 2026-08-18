@@ -1,6 +1,5 @@
 """
 test runner for criteria gate
-
 """
 import json
 import os

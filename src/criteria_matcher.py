@@ -14,7 +14,7 @@ def eval_job_criteria(scraped_job, criteria_path=None):
         Returns:
             bool: True if the job meets the criteria, False otherwise.    
     """
-    
+
     if criteria_path is None:
         criteria_path = os.path.join(BASE_DIR, "criteria.json")
     elif not os.path.isabs(criteria_path):
@@ -23,6 +23,8 @@ def eval_job_criteria(scraped_job, criteria_path=None):
     with open(criteria_path, "r") as f:
         lim = json.load(f)
 
+
+    # You can keep the function (scraped_job) as is. But don't rely on an actual webscraper such as playwright or anything, the user opens the page on their own as this is an extension, and the extension will scrape the page for them. So the function will be passed a dictionary of the scraped job description, title, location, pay, etc. The function will then evaluate the job description against the criteria defined in the JSON file and return a boolean value indicating whether the job meets the criteria or not.
     title = scraped_job.get("title", "").lower()
     location = scraped_job.get("location", "").lower()
     pay_txt = scraped_job.get("pay", "").lower()
@@ -37,12 +39,13 @@ def eval_job_criteria(scraped_job, criteria_path=None):
         return False, f"Job location '{location}' is not in the list of allowed locations: {', '.join(lim['allowed_locations'])}"
 
 
-    raw_nums = re.findall(r'\b\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\b\d{2,6}', pay_txt)
+    # Regex is great, for a scraper that is, but since we plan on migrating to a extension based application, we won't need to use regex to locate the pay.
+    raw_nums = re.findall(r'\b\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\b\d{2,6}', pay_txt) 
+
     nums = [float(num.replace(',', '')) for num in raw_nums]
 
     if nums:
         max_pay = max(nums)
-
         is_hourly = "hour" in pay_txt or "hr" in pay_txt or max_pay < 500
 
         if is_hourly:
