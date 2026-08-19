@@ -1,0 +1,110 @@
+[
+  {
+    "name": "TC01: Valid - Frontend Cloud Focus (Reno Local)",
+    "payload": {
+      "title": "Cloud Frontend Developer",
+      "location": "Reno, NV",
+      "pay": "$45.00 / hr"
+    },
+    "expected": true
+  },
+  {
+    "name": "TC02: Valid - DevOps Target Token (Henderson Hybrid)",
+    "payload": {
+      "title": "Junior DevOps Engineer",
+      "location": "Henderson, NV (Hybrid)",
+      "pay": "Salary: $65,000 / year"
+    },
+    "expected": true
+  },
+  {
+    "name": "TC03: Valid - Cyber Security Focus (Las Vegas Base)",
+    "payload": {
+      "title": "Entry Level Cybersecurity Analyst",
+      "location": "Las Vegas, Nevada",
+      "pay": "$32.50 per hour"
+    },
+    "expected": true
+  },
+  {
+    "name": "TC04: Valid - Networking Token (Remote Standard)",
+    "payload": {
+      "title": "Networking Infrastructure Assistant",
+      "location": "Remote (US/Canada)",
+      "pay": "$55,000 annually"
+    },
+    "expected": true
+  },
+  {
+    "name": "TC05: Valid - Database Track (Sparks Low Wage Pass)",
+    "payload": {
+      "title": "Database Administrator Specialist",
+      "location": "Sparks, NV",
+      "pay": "$16.50/hr"
+    },
+    "expected": true
+  },
+  {
+    "name": "TC06: Valid - Mobile Token (Tahoe Edge Salary Pass)",
+    "payload": {
+      "title": "Mobile App Developer",
+      "location": "South Lake Tahoe",
+      "pay": "Starting at $35,000"
+    },
+    "expected": true
+  },
+  {
+    "name": "TC07: FAIL - Banned Roman Numeral Suffix II",
+    "payload": {
+      "title": "Fullstack Software Engineer II",
+      "location": "Reno, NV",
+      "pay": "$95,000"
+    },
+    "expected": false
+  },
+  {
+    "name": "TC08: FAIL - Banned Roman Numeral Suffix III",
+    "payload": {
+      "title": "Embedded Firmware Developer III",
+      "location": "Remote",
+      "pay": "$115,000"
+    },
+    "expected": false
+  },
+  {
+    "name": "TC11: FAIL - Out of State Location Mismatch",
+    "payload": {
+      "title": "Web Application Developer",
+      "location": "Phoenix, AZ",
+      "pay": "$75,000"
+    },
+    "expected": false
+  },
+  {
+    "name": "TC10: FAIL - Missing Target Tokens Completely",
+    "payload": {
+      "title": "Technical Customer Support Representative",
+      "location": "Reno, NV",
+      "pay": "$22.00 / hour"
+    },
+    "expected": false
+  },
+  {
+    "name": "TC11: FAIL - Hourly Wage Below Modified Limits",
+    "payload": {
+      "title": "Software Engineering Tutor",
+      "location": "Sparks, NV",
+      "pay": "$12.00 / hr"
+    },
+    "expected": false
+  },
+  {
+    "name": "TC12: FAIL - Annual Salary Below Modified Limits",
+    "payload": {
+      "title": "Junior QA Manual Tester",
+      "location": "Remote",
+      "pay": "Stipend: $24,000 / year"
+    },
+    "expected": false
+  }
+]
