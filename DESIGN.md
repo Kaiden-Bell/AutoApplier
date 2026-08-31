@@ -1,4 +1,4 @@
-# AutoApplier — Design Document
+# AutoApplier — Design Document UPDATED
 
 **Status:** Migrating from a local CLI pipeline to a browser extension + hosted proxy service.
 
