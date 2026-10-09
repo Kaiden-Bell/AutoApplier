@@ -58,10 +58,10 @@ account/credit/payment integration; the diagram is not a claim that those parts 
   0. Verify session; enforce durable account/IP attempt and concurrency limits
   1. Criteria gate (deterministic title/location/pay check) — stops here if it fails
   2. Database: deduplicate request and atomically reserve 1 available credit
-     └── No credit → payment required; do not call the LLM (A DB is required, idk where to host yet)
+     └── No credit → payment required; do not call the LLM (use sqlite)
   3. LLM call → { is_qualified, gap_analysis, latex_code }
   4. If qualified: validate latex_code, then compile → PDF (restricted pdflatex, temp dir)
-  5. Database: consume reservation on successful PDF; release on rejection/failure
+  5. Database: consume reservation on successful PDF; release on rejection/failure; require timeout
             │
             ▼  { stage, is_qualified, reason, gap_analysis,
                  latex_source, resume_pdf_base64, compile_log,
@@ -76,6 +76,7 @@ account/credit/payment integration; the diagram is not a claim that those parts 
   Extension → authenticated checkout request → hosted payment page
   Payment provider → signed webhook → backend verifies payment and grants credits once
   Extension → refresh account balance → tailoring can resume
+  Consider Subscription → Per month quota of credits per plan.
 ```
 
 ## 4. Target Repository Structure
@@ -132,7 +133,7 @@ shared file-based compiler; `backend/compiler.py` adapts request text and PDF by
 
 1. The user activates the extension and opens an introductory page explaining how to use the
    service, the 3 free creations, paid credits, and where to find settings. Google sign-in is
-   required before the first generation. The backend grants the account's free credits once.
+   required before the first generation. The backend grants the account's free credits once. Consider using lower level models for free creations. 
 2. In settings, the user edits the criteria fields (target/banned title tokens, allowed
    locations, and minimum pay). The extension saves these small preferences to
    `chrome.storage.sync` and loads them on later visits, so they do not need to be re-entered.
@@ -399,6 +400,8 @@ consumption or release in a transaction with a unique settlement record. Retries
 restarts cannot repeat settlement. Recover stale reservations with worker ownership/expiry
 checks; do not release a credit while its worker can still finish and consume it. An ambiguous
 provider timeout is not permission to blindly repeat the model call.
+
+**Create a state machine to define this asap ^^**
 
 Credit consumption is tied to PDF creation, not browser download acknowledgement. A lost HTTP
 response must not trigger another model call or another charge under the same request key.
