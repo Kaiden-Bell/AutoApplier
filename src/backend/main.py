@@ -1,64 +1,147 @@
 """
-    main.py - The main entry point for the AutoApplier application.
+    main.py - FastAPI proxy backend for the AutoApplier extension.
+
+    Run from the repository root:
+        PYTHONPATH=src uvicorn backend.main:app --port 8000 --workers 1
 """
 
-import json
-import os
-import sys
+import base64
+import hashlib
+import logging
+import shutil
+from contextlib import asynccontextmanager
+from typing import Optional
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(BASE_DIR, "src"))
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 
-from criteria_matcher import eval_job_criteria
-from llm_engine import run_llm_generation
-from compiler import compile_latex_to_pdf
+from . import compile_adapter, latex_guard, llm_engine
+from .config import Settings, load_default_criteria
+from .criteria_matcher import eval_job_criteria
+from .jobs import IdempotencyConflict, JobStore
+from .schemas import RequestStatus, TailorRequest, TailorResult
+from .security import RateLimiter, client_ip, make_api_key_dependency
 
-def run_pipeline():
-    print("--- Starting AutoApplier Pipeline ---")
+log = logging.getLogger("autoapplier")
 
-    mock_job = {
-        "title": "Software Engineer",
-        "location": "Reno, NV",
-        "pay": "$85,000 - $105,000 / year"
-    }
-    
-    print(f"Checking Job Criteria for:\n   Title: {mock_job['title']}\n   Location: {mock_job['location']}\n   Pay: {mock_job['pay']}")
-    
-    meets_criteria, criteria_reason = eval_job_criteria(mock_job)
-    print(f"Criteria Result: {meets_criteria} ({criteria_reason})")
-    
-    if not meets_criteria:
-        print("Job does not meet criteria. Halting pipeline.")
-        return
 
-    print("\nCriteria check passed! Proceeding to LLM matching...")
-    
-    prompt_path = os.path.join(BASE_DIR, "prompts", "resume_builder_prompt.txt")
-    cv_path = os.path.join(BASE_DIR, "tests", "test_text_files", "master_cv.txt")
-    jd_path = os.path.join(BASE_DIR, "tests", "test_text_files", "job_description.txt")
-    output_tex = os.path.join(BASE_DIR, "tailored_resume.tex")
-    
+def run_pipeline(req: TailorRequest, settings: Settings) -> TailorResult:
+    """LLM → LaTeX validation → compile. The criteria gate has already passed."""
     try:
-        success, info = run_llm_generation(
-            prompt_path=prompt_path,
-            cv_path=cv_path,
-            jd_path=jd_path,
-            output_path=output_tex
+        llm = llm_engine.generate(req.job, req.resume_text, settings.openai_model)
+    except llm_engine.LLMError:
+        raise
+    except Exception:
+        log.exception("Unexpected error during LLM generation")
+        raise RuntimeError("Unexpected server error during generation.")
+
+    if not llm.is_qualified:
+        return TailorResult(
+            stage="llm", is_qualified=False,
+            reason="The model judged the CV not qualified for this posting.",
+            gap_analysis=llm.gap_analysis,
         )
-    except Exception as e:
-        print(f"Error during LLM execution: {e}")
-        print("Make sure you have set the OPENAI_API_KEY environment variable.")
-        return
 
-    if not success:
-        print(f"Candidate not qualified. Gap analysis: {info}")
-        return
+    problems = latex_guard.check_latex(llm.latex_code)
+    if problems:
+        return TailorResult(
+            stage="compile", is_qualified=True,
+            reason="The generated LaTeX failed validation and was not compiled.",
+            gap_analysis=llm.gap_analysis, latex_source=llm.latex_code,
+            compile_log="\n".join(problems),
+        )
 
-    print(f"Tailored resume written to: {info}")
+    pdf_bytes, compile_log = compile_adapter.compile_latex_source(
+        llm.latex_code, timeout=settings.compile_timeout_seconds,
+    )
+    if pdf_bytes is None:
+        return TailorResult(
+            stage="compile", is_qualified=True,
+            reason="pdflatex could not compile the generated resume. Fix the LaTeX source by hand.",
+            gap_analysis=llm.gap_analysis, latex_source=llm.latex_code, compile_log=compile_log,
+        )
 
-    print("\nCompiling tailored LaTeX resume...")
-    compile_latex_to_pdf(output_tex)
-    print("--- Pipeline Execution Finished ---")
+    return TailorResult(
+        stage="complete", is_qualified=True, reason="Resume generated.",
+        gap_analysis=llm.gap_analysis, latex_source=llm.latex_code,
+        resume_pdf_base64=base64.b64encode(pdf_bytes).decode("ascii"),
+    )
 
-if __name__ == "__main__":
-    run_pipeline()
+
+def _fingerprint(req: TailorRequest):
+    return hashlib.sha256(req.model_dump_json().encode("utf-8")).hexdigest()
+
+
+def create_app(settings: Optional[Settings] = None) -> FastAPI:
+    settings = settings or Settings()
+    store = JobStore(settings.worker_count, settings.job_ttl_seconds)
+    limiter = RateLimiter(settings.rate_limit_per_minute)
+    require_api_key = make_api_key_dependency(lambda: settings)
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        if not settings.api_key:
+            log.warning("AUTOAPPLIER_API_KEY is not set; all /api requests will be refused.")
+        yield
+        store.shutdown()
+
+    app = FastAPI(title="AutoApplier API", version="0.1.0", lifespan=lifespan)
+    app.state.settings = settings
+    app.state.store = store
+    app.state.limiter = limiter
+
+    # Extension service-worker fetches are not subject to CORS; this is defense in depth only.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"^chrome-extension://[a-p]{32}$",
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type", "X-AutoApplier-Key", "Idempotency-Key"],
+    )
+
+    @app.get("/health")
+    def health():
+        return {"ok": True, "pdflatex_available": shutil.which("pdflatex") is not None}
+
+    @app.post(
+        "/api/tailor",
+        dependencies=[Depends(require_api_key)],
+        responses={202: {"model": RequestStatus}, 200: {"model": RequestStatus}},
+    )
+    def tailor(
+        req: TailorRequest, request: Request, response: Response,
+        idempotency_key: Optional[str] = Header(default=None, max_length=200),
+    ) -> RequestStatus:
+        criteria = req.criteria.model_dump() if req.criteria else load_default_criteria()
+        passed, reason = eval_job_criteria(req.job.model_dump(), criteria)
+        if not passed:
+            # No model call happens, so criteria rejections do not count toward the rate limit.
+            return RequestStatus(
+                request_id="", status="done",
+                result=TailorResult(stage="criteria", is_qualified=False, reason=reason),
+            )
+
+        if not limiter.allow(client_ip(request)):
+            raise HTTPException(429, "Too many generation requests; try again in a minute.")
+
+        try:
+            request_id, _ = store.submit(
+                lambda: run_pipeline(req, settings),
+                idempotency_key=idempotency_key, fingerprint=_fingerprint(req),
+            )
+        except IdempotencyConflict:
+            raise HTTPException(409, "Idempotency-Key was already used with different input.")
+
+        response.status_code = 202
+        return store.get(request_id) or RequestStatus(request_id=request_id, status="running")
+
+    @app.get("/api/requests/{request_id}", dependencies=[Depends(require_api_key)])
+    def get_request(request_id: str) -> RequestStatus:
+        status = store.get(request_id)
+        if status is None:
+            raise HTTPException(404, "Unknown or expired request.")
+        return status
+
+    return app
+
+
+app = create_app()

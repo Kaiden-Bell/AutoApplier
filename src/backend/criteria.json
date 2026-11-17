@@ -1,0 +1,7 @@
+{
+    "target_tokens": ["software", "swe", "hardware", "embedded", "firmware", "fullstack", "backend", "frontend", "web", "mobile", "desktop", "cloud", "devops", "database", "machine learning", "artificial intelligence", "AI", "ML", "deep learning", "computer vision", "cybersecurity", "networking"],
+    "banned_tokens": ["ii", "iii", "iv", "senior", "manager", "director", "lead", "principal", "architect", "vp", "cto", "cxo", "chief", "head", "founder", "co-founder", "owner", "entrepreneur"],
+    "allowed_locations": ["remote", "reno", "sparks", "carson city", "tahoe", "henderson", "las vegas", "hybrid"],
+    "minimum_hourly_rate": 15,
+    "minimum_annual_salary": 30000
+}

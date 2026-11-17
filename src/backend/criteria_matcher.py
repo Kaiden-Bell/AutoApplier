@@ -1,60 +1,98 @@
-import json
+"""
+    Deterministic criteria gate: title / location / pay checks that run before any LLM call.
+
+    The criteria come from the user's extension settings (or the bundled default criteria.json),
+    and the job dict comes from the extension's page extraction.
+"""
+
 import re
-import os
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_HOURLY_RE = re.compile(r"\b(hour|hours|hourly|hr|hrs)\b|/\s*h\b")
+_MONTHLY_RE = re.compile(r"\b(month|monthly|mo)\b")
+_ANNUAL_RE = re.compile(r"\b(year|years|yearly|annual|annually|yr|yrs|pa)\b")
+# A number such as 85,000 / 85000 / 32.50, optionally followed by "k" (thousands).
+_AMOUNT_RE = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(k)?\b", re.IGNORECASE)
 
-def eval_job_criteria(scraped_job, criteria_path=None):
+
+def _contains_token(text, token):
+    """Whole-word / whole-phrase match, so "ii" does not match "hawaii" and "lead" not "leader"."""
+    token = token.strip().lower()
+    if not token:
+        return False
+    return re.search(r"(?<!\w)" + re.escape(token) + r"(?!\w)", text) is not None
+
+
+def parse_pay(pay_text):
     """
         Desc:
-            This function evaluates a scraped job description against a set of criteria defined in a JSON file.
-        Args:
-            scraped_job (dict): A dictionary containing the job description and other relevant information.
-            criteria_path (str): The path to the JSON file containing the evaluation criteria.
+            Parses free-text pay such as "$45.00 / hr", "$85k - $105k", "$20000 / year".
         Returns:
-            bool: True if the job meets the criteria, False otherwise.    
+            tuple | None: (amount, "hourly" | "annual") using the top of any range, or None if no
+            amount is present.
     """
+    text = (pay_text or "").lower()
+    amounts = []
+    for number, k_suffix in _AMOUNT_RE.findall(text):
+        try:
+            value = float(number.replace(",", ""))
+        except ValueError:
+            continue
+        if k_suffix:
+            value *= 1000
+        amounts.append(value)
 
-    if criteria_path is None:
-        criteria_path = os.path.join(BASE_DIR, "criteria.json")
-    elif not os.path.isabs(criteria_path):
-        criteria_path = os.path.join(BASE_DIR, criteria_path)
+    if not amounts:
+        return None
 
-    with open(criteria_path, "r") as f:
-        lim = json.load(f)
-
-
-    # You can keep the function (scraped_job) as is. But don't rely on an actual webscraper such as playwright or anything, the user opens the page on their own as this is an extension, and the extension will scrape the page for them. So the function will be passed a dictionary of the scraped job description, title, location, pay, etc. The function will then evaluate the job description against the criteria defined in the JSON file and return a boolean value indicating whether the job meets the criteria or not.
-    title = scraped_job.get("title", "").lower()
-    location = scraped_job.get("location", "").lower()
-    pay_txt = scraped_job.get("pay", "").lower()
-
-    if any(token in title for token in lim["banned_tokens"]):
-        return False, f"Job title contains banned token(s): {', '.join([token for token in lim['banned_tokens'] if token in title])}"
-
-    if not any(token in title for token in lim["target_tokens"]):
-        return False, f"Job title does not contain any target token(s): {', '.join(lim['target_tokens'])}"
-
-    if not any(loc in location for loc in lim["allowed_locations"]):
-        return False, f"Job location '{location}' is not in the list of allowed locations: {', '.join(lim['allowed_locations'])}"
+    amount = max(amounts)
+    if _HOURLY_RE.search(text):
+        return amount, "hourly"
+    if _MONTHLY_RE.search(text):
+        return amount * 12, "annual"
+    if _ANNUAL_RE.search(text):
+        return amount, "annual"
+    # No unit given: small numbers are hourly rates, large ones are salaries.
+    return amount, ("hourly" if amount < 500 else "annual")
 
 
-    # Regex is great, for a scraper that is, but since we plan on migrating to a extension based application, we won't need to use regex to locate the pay.
-    raw_nums = re.findall(r'\b\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\b\d{2,6}', pay_txt) 
+def eval_job_criteria(job, criteria):
+    """
+        Desc:
+            Evaluates an extracted job posting against the user's criteria.
+        Args:
+            job (dict): Extracted posting with "title", "location" and "pay" strings.
+            criteria (dict): target_tokens, banned_tokens, allowed_locations,
+                minimum_hourly_rate, minimum_annual_salary. Missing keys are not enforced.
+        Returns:
+            tuple: (bool, str) whether the job passes, and a human-readable reason.
+    """
+    title = (job.get("title") or "").lower()
+    location = (job.get("location") or "").lower()
+    pay_text = job.get("pay") or ""
 
-    nums = [float(num.replace(',', '')) for num in raw_nums]
+    banned = [t for t in criteria.get("banned_tokens", []) if _contains_token(title, t)]
+    if banned:
+        return False, f"Job title contains banned token(s): {', '.join(banned)}"
 
-    if nums:
-        max_pay = max(nums)
-        is_hourly = "hour" in pay_txt or "hr" in pay_txt or max_pay < 500
+    targets = criteria.get("target_tokens", [])
+    if targets and not any(_contains_token(title, t) for t in targets):
+        return False, f"Job title does not contain any target token(s): {', '.join(targets)}"
 
-        if is_hourly:
-            if max_pay < lim["minimum_hourly_rate"]:
-                return False, f"Job pay rate ${max_pay}/hr is below the minimum hourly rate of ${lim['minimum_hourly_rate']}/hr"
+    locations = [loc.strip().lower() for loc in criteria.get("allowed_locations", []) if loc.strip()]
+    if locations and not any(loc in location for loc in locations):
+        shown = location or "(none given)"
+        return False, f"Job location '{shown}' is not in the list of allowed locations: {', '.join(locations)}"
+
+    parsed = parse_pay(pay_text)
+    if parsed:
+        amount, unit = parsed
+        if unit == "hourly":
+            minimum = criteria.get("minimum_hourly_rate")
+            if minimum and amount < minimum:
+                return False, f"Job pay rate ${amount:g}/hr is below the minimum hourly rate of ${minimum:g}/hr"
         else:
-            if max_pay < lim["minimum_annual_salary"]:
-                return False, f"Job salary ${max_pay}/yr is below the minimum annual salary of ${lim['minimum_annual_salary']}/yr"
+            minimum = criteria.get("minimum_annual_salary")
+            if minimum and amount < minimum:
+                return False, f"Job salary ${amount:,.0f}/yr is below the minimum annual salary of ${minimum:,.0f}/yr"
 
     return True, "Job meets all criteria"
-
-
