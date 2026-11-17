@@ -128,7 +128,7 @@ function aaFormatPay(posting) {
 function parseJobPosting(posting) {
   if (!aaIsJobPosting(posting)) return null;
   var org = posting.hiringOrganization;
-  var company = org && typeof org === "object" ? org.name : org;
+  var company = aaHtmlToText(org && typeof org === "object" ? org.name : org);
   var description = aaHtmlToText(posting.description);
   if (company && description.indexOf(company) === -1) description = "Company: " + company + "\n\n" + description;
   return {

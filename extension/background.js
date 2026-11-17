@@ -74,6 +74,10 @@ function describeError(status, data) {
   return `Backend returned HTTP ${status}.`;
 }
 
+// Every backend call returns quickly (generation is queued), so a slow response means the
+// backend is unreachable. Fail well before MV3's 30s fetch limit instead of hanging.
+const REQUEST_TIMEOUT_MS = 10000;
+
 async function api(cfg, path, { method = "GET", body, headers = {} } = {}) {
   let res;
   try {
@@ -81,9 +85,11 @@ async function api(cfg, path, { method = "GET", body, headers = {} } = {}) {
       method,
       headers: { "Content-Type": "application/json", "X-AutoApplier-Key": cfg.apiKey, ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (e) {
-    const err = new Error(`Could not reach the backend at ${cfg.backendUrl}. Is it running?`);
+    const why = e.name === "TimeoutError" ? "timed out" : "failed";
+    const err = new Error(`Connecting to the backend at ${cfg.backendUrl} ${why}. Check the Backend URL in settings and that the server is running and reachable from this computer.`);
     err.transient = true;
     throw err;
   }
@@ -104,7 +110,7 @@ async function api(cfg, path, { method = "GET", body, headers = {} } = {}) {
 
 async function checkHealth() {
   const cfg = await getConfig();
-  const res = await fetch(cfg.backendUrl + "/health").catch(() => null);
+  const res = await fetch(cfg.backendUrl + "/health", { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }).catch(() => null);
   if (!res || !res.ok) throw new Error(`Could not reach the backend at ${cfg.backendUrl}.`);
   return res.json();
 }
@@ -170,7 +176,7 @@ async function submitAndPoll(run, cfg, job) {
         break;
       } catch (e) {
         // The idempotency key makes a retry safe: the backend will not start a second generation.
-        if (!e.transient || attempt >= 2) throw e;
+        if (!e.transient || attempt >= 1) throw e;
         await sleep(1500);
       }
     }

@@ -55,3 +55,9 @@ test("non-postings return null and plain text is preserved", () => {
   assert.equal(parseJobPosting({ "@type": "Organization" }), null);
   assert.equal(aaHtmlToText("R&D role, 5+ years"), "R&D role, 5+ years");
 });
+
+test("company names with HTML entities are decoded", () => {
+  const job = parseJobPosting({ "@type": "JobPosting", title: "Intern", description: "Build games.",
+    hiringOrganization: { name: "Light &amp; Wonder, Inc" } });
+  assert.match(job.description, /^Company: Light & Wonder, Inc/);
+});
