@@ -6,6 +6,7 @@
 """
 
 import logging
+import os
 from functools import lru_cache
 
 import openai
@@ -27,8 +28,14 @@ def _system_prompt():
 
 
 @lru_cache(maxsize=1)
-def _client():
+def _openai_client():
     return OpenAI()
+
+
+def _client():
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise LLMError("OPENAI_API_KEY is not configured on the server.")
+    return _openai_client()
 
 
 def build_user_content(job, resume_text):

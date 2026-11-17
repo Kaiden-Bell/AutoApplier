@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AutoApplier Settings</title>
+  <link rel="stylesheet" href="ui.css">
+  <style>
+    main { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; }
+    section { border-top: 1px solid var(--border); padding-top: 4px; margin-top: 20px; }
+    #resume { min-height: 220px; }
+    .status { margin-left: 8px; font-size: 13px; }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--err); }
+  </style>
+</head>
+<body>
+<main>
+  <h1>AutoApplier settings</h1>
+  <p class="muted">Your CV and connection settings stay on this browser. Your criteria sync with your Chrome profile when Chrome Sync is on. <a href="welcome.html">How it works</a></p>
+
+  <section>
+    <h2>1. Backend connection</h2>
+    <label for="backend-url">Backend URL <span class="hint">— default http://localhost:8000</span></label>
+    <input id="backend-url" type="url" placeholder="http://localhost:8000">
+    <label for="api-key">API key <span class="hint">— the AUTOAPPLIER_API_KEY value from the backend's .env</span></label>
+    <input id="api-key" type="password" autocomplete="off">
+    <p></p>
+    <div class="row">
+      <button id="save-connection" class="primary">Save connection</button>
+      <button id="test-connection">Test connection</button>
+      <span id="connection-status" class="status"></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>2. Master CV</h2>
+    <p class="muted">Paste your full CV, or load a .txt, .tex or .md file. The model only uses facts from this text, so include everything you might want on a tailored resume.</p>
+    <div class="row">
+      <input id="resume-file" type="file" accept=".txt,.tex,.md,text/plain">
+    </div>
+    <label for="resume">CV text <span id="resume-count" class="hint"></span></label>
+    <textarea id="resume" class="mono" maxlength="50000"></textarea>
+    <p></p>
+    <div class="row">
+      <button id="save-resume" class="primary">Save CV</button>
+      <span id="resume-status" class="status"></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>3. Job criteria</h2>
+    <p class="muted">Checked before the LLM runs. Jobs that fail are skipped at no cost. Leave a field empty to not filter on it.</p>
+    <label for="target-tokens">Target title words <span class="hint">— the title must contain at least one (comma-separated)</span></label>
+    <textarea id="target-tokens" rows="3"></textarea>
+    <label for="banned-tokens">Banned title words <span class="hint">— the title must contain none (whole words, e.g. senior, ii)</span></label>
+    <textarea id="banned-tokens" rows="3"></textarea>
+    <label for="allowed-locations">Allowed locations <span class="hint">— the location must contain one (e.g. remote, reno)</span></label>
+    <textarea id="allowed-locations" rows="2"></textarea>
+    <div class="row">
+      <div class="grow">
+        <label for="min-hourly">Minimum hourly rate ($)</label>
+        <input id="min-hourly" type="number" min="0" step="0.5">
+      </div>
+      <div class="grow">
+        <label for="min-annual">Minimum annual salary ($)</label>
+        <input id="min-annual" type="number" min="0" step="1000">
+      </div>
+    </div>
+    <p></p>
+    <div class="row">
+      <button id="save-criteria" class="primary">Save criteria</button>
+      <button id="reset-criteria">Reset to defaults</button>
+      <span id="criteria-status" class="status"></span>
+    </div>
+  </section>
+</main>
+<script src="options.js"></script>
+</body>
+</html>

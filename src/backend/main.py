@@ -8,6 +8,7 @@
 import base64
 import hashlib
 import logging
+import os
 import shutil
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -100,7 +101,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get("/health")
     def health():
-        return {"ok": True, "pdflatex_available": shutil.which("pdflatex") is not None}
+        return {
+            "ok": True,
+            "pdflatex_available": shutil.which("pdflatex") is not None,
+            "api_key_configured": bool(settings.api_key),
+            "openai_key_configured": bool(os.environ.get("OPENAI_API_KEY")),
+        }
 
     @app.post(
         "/api/tailor",

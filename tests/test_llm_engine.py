@@ -67,3 +67,9 @@ def test_upstream_api_failure(monkeypatch):
 
 def test_prompt_file_loads():
     assert "is_qualified" in llm_engine._system_prompt()
+
+
+def test_missing_openai_key_is_reported(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(llm_engine.LLMError, match="OPENAI_API_KEY"):
+        llm_engine.generate(JOB, "cv", "m")
