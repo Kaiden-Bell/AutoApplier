@@ -1,0 +1,11 @@
+.git
+.github
+.venv
+venv
+.env
+**/__pycache__
+output
+extension
+tests
+*.tex
+*.pdf

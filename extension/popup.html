@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>AutoApplier</title>
+  <link rel="stylesheet" href="ui.css">
+  <style>
+    body { width: 400px; padding: 14px; }
+    header { display: flex; justify-content: space-between; align-items: baseline; }
+    #description { min-height: 110px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>AutoApplier</h1>
+    <a href="options.html" target="_blank" id="settings-link">Settings</a>
+  </header>
+
+  <div id="setup-banner" class="card warn" hidden>
+    <h3>Finish setup</h3>
+    <p id="setup-text"></p>
+    <button id="open-settings">Open settings</button>
+  </div>
+
+  <section id="run-status" hidden></section>
+
+  <section id="job-form">
+    <div class="row">
+      <button id="extract">Extract posting</button>
+      <span id="source-badge" class="badge" hidden></span>
+    </div>
+    <p id="extract-note" class="muted" hidden></p>
+
+    <label for="title">Job title</label>
+    <input id="title" type="text" maxlength="500">
+    <div class="row">
+      <div class="grow">
+        <label for="location">Location</label>
+        <input id="location" type="text" maxlength="500" placeholder="e.g. Reno, NV or Remote">
+      </div>
+      <div class="grow">
+        <label for="pay">Pay</label>
+        <input id="pay" type="text" maxlength="500" placeholder="e.g. $30 / hr">
+      </div>
+    </div>
+    <label for="description">Description <span class="hint">— check this before sending</span></label>
+    <textarea id="description" maxlength="50000"></textarea>
+
+    <p></p>
+    <button id="tailor" class="primary">Tailor resume</button>
+    <p class="muted" style="margin-top:8px">Your criteria are checked first, so a rejected job costs no LLM call. AutoApplier never submits applications.</p>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>

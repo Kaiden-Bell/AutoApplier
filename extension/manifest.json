@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "AutoApplier",
+  "version": "0.1.0",
+  "description": "Tailor your master CV into a one-page resume for the job posting you're viewing. Never auto-applies.",
+  "permissions": ["storage", "activeTab", "scripting", "downloads"],
+  "host_permissions": ["http://localhost:2005/*", "http://127.0.0.1:2005/*"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "AutoApplier", "default_popup": "popup.html" },
+  "options_page": "options.html"
+}
