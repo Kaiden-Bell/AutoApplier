@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Tailor your master CV into a one-page resume for the job posting you're viewing. Never auto-applies.",
   "permissions": ["storage", "activeTab", "scripting", "downloads"],
-  "host_permissions": ["http://localhost:8000/*", "http://127.0.0.1:8000/*"],
+  "host_permissions": ["http://localhost:2005/*", "http://127.0.0.1:2005/*"],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
   "background": { "service_worker": "background.js" },
   "action": { "default_title": "AutoApplier", "default_popup": "popup.html" },

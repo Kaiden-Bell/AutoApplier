@@ -2,7 +2,7 @@
     main.py - FastAPI proxy backend for the AutoApplier extension.
 
     Run from the repository root:
-        PYTHONPATH=src uvicorn backend.main:app --port 8000 --workers 1
+        PYTHONPATH=src uvicorn backend.main:app --port 2005 --workers 1
 """
 
 import base64

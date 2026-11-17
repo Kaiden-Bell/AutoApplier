@@ -4,7 +4,7 @@
 // any time. The backend queues each generation and is polled, because MV3 terminates a
 // service worker whose fetch() takes longer than 30 seconds to respond.
 
-const DEFAULT_BACKEND_URL = "http://localhost:8000";
+const DEFAULT_BACKEND_URL = "http://localhost:2005";
 const POLL_INTERVAL_MS = 3000;
 const MAX_WAIT_MS = 5 * 60 * 1000;
 const MAX_POLL_FAILURES = 5;

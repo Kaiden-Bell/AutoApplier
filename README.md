@@ -21,10 +21,10 @@ You need Docker, Chrome (or Edge or Brave), and an OpenAI API key.
 ```bash
 cp .env.example .env          # then set OPENAI_API_KEY and pick an AUTOAPPLIER_API_KEY
 docker build -t autoapplier .
-docker run --rm -p 127.0.0.1:8000:8000 --env-file .env autoapplier
+docker run --rm -p 127.0.0.1:2005:2005 --env-file .env autoapplier
 ```
 
-Check it with `curl localhost:8000/health`. All four values should be `true`. Binding to `127.0.0.1` keeps the API off your network.
+Check it with `curl localhost:2005/health`. All four values should be `true`. Binding to `127.0.0.1` keeps the API off your network.
 
 ### 2. Load the extension
 
@@ -90,10 +90,10 @@ print(json.dumps({
           "description": open("tests/test_text_files/job_description.txt").read()},
   "resume_text": open("tests/test_text_files/master_cv.txt").read()}))
 EOF
-curl -s -X POST localhost:8000/api/tailor -H "X-AutoApplier-Key: $AUTOAPPLIER_API_KEY" \
+curl -s -X POST localhost:2005/api/tailor -H "X-AutoApplier-Key: $AUTOAPPLIER_API_KEY" \
      -H 'Content-Type: application/json' -d @/tmp/req.json
 # then poll:
-curl -s localhost:8000/api/requests/<request_id> -H "X-AutoApplier-Key: $AUTOAPPLIER_API_KEY"
+curl -s localhost:2005/api/requests/<request_id> -H "X-AutoApplier-Key: $AUTOAPPLIER_API_KEY"
 ```
 
 ## Development
@@ -103,7 +103,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
 PYTHONPATH=src python -m pytest tests          # compile tests skip without pdflatex
 node --test tests/*.test.js                    # JSON-LD parser tests
-PYTHONPATH=src uvicorn backend.main:app --reload --port 8000
+PYTHONPATH=src uvicorn backend.main:app --reload --port 2005
 ```
 
 To run the complete suite, including the real `pdflatex` tests, inside the image:

@@ -1,9 +1,9 @@
 // Settings page: backend connection + CV in storage.local, criteria in storage.sync.
 
 const $ = (id) => document.getElementById(id);
-const DEFAULT_BACKEND_URL = "http://localhost:8000";
+const DEFAULT_BACKEND_URL = "http://localhost:2005";
 const MAX_RESUME_CHARS = 50000; // matches the backend's request limit
-const BUILT_IN_ORIGINS = ["http://localhost:8000", "http://127.0.0.1:8000"];
+const BUILT_IN_ORIGINS = ["http://localhost:2005", "http://127.0.0.1:2005"];
 
 function setStatus(id, kind, text) {
   const node = $(id);
