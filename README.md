@@ -5,7 +5,7 @@ AutoApplier is a Chrome extension plus a small FastAPI backend. It tailors your 
 1. **Extract.** Click the toolbar icon on a job posting. The extension reads the page's schema.org `JobPosting` data. If the page has none, it makes a best guess, and you confirm or edit the fields.
 2. **Criteria gate.** The backend checks the title, location and pay against your criteria. A rejected job costs no LLM call.
 3. **Generate.** An OpenAI model compares the posting with your CV. It returns a gap analysis and, if you're qualified, a one-page LaTeX resume that uses only facts from your CV.
-4. **Compile.** The LaTeX is validated and compiled with restricted `pdflatex` in a throwaway directory. The PDF downloads to `Downloads/AutoApplier/`.
+4. **Compile.** The LaTeX is validated and compiled with restricted `pdflatex` in a throwaway directory. If it runs past one page, the backend recompiles with tighter margins, spacing and font size, without changing any wording. If it still doesn't fit, you get the PDF with a warning. The PDF downloads to `Downloads/AutoApplier/`.
 5. **You review and apply.** AutoApplier **never** submits applications.
 
 The OpenAI key lives only on the backend. See [DESIGN.md](./DESIGN.md) for the architecture, security decisions and roadmap.

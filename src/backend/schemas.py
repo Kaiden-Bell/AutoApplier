@@ -49,6 +49,7 @@ class TailorResult(BaseModel):
     latex_source: str = ""
     resume_pdf_base64: str = ""
     compile_log: str = ""
+    page_count: int = 0          # 0 when unknown or no PDF was produced
 
 
 class RequestStatus(BaseModel):

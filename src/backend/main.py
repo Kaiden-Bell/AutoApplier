@@ -16,7 +16,7 @@ from typing import Optional
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import compile_adapter, latex_guard, llm_engine
+from . import latex_guard, llm_engine, page_fit
 from .config import Settings, load_default_criteria
 from .criteria_matcher import eval_job_criteria
 from .jobs import IdempotencyConflict, JobStore
@@ -52,20 +52,27 @@ def run_pipeline(req: TailorRequest, settings: Settings) -> TailorResult:
             compile_log="\n".join(problems),
         )
 
-    pdf_bytes, compile_log = compile_adapter.compile_latex_source(
-        llm.latex_code, timeout=settings.compile_timeout_seconds,
-    )
-    if pdf_bytes is None:
+    fit = page_fit.compile_one_page(llm.latex_code, timeout=settings.compile_timeout_seconds)
+    if fit["pdf"] is None:
         return TailorResult(
             stage="compile", is_qualified=True,
             reason="pdflatex could not compile the generated resume. Fix the LaTeX source by hand.",
-            gap_analysis=llm.gap_analysis, latex_source=llm.latex_code, compile_log=compile_log,
+            gap_analysis=llm.gap_analysis, latex_source=llm.latex_code, compile_log=fit["log"],
         )
 
+    pages = fit["pages"] or 0
+    if pages > 1:
+        reason = (f"Resume generated, but it is {pages} pages even with the tightest layout. "
+                  "Trim it by hand in the .tex.")
+    elif fit["adjustment"]:
+        reason = f"Resume generated. Layout tightened to fit one page ({fit['adjustment']})."
+    else:
+        reason = "Resume generated."
+
     return TailorResult(
-        stage="complete", is_qualified=True, reason="Resume generated.",
-        gap_analysis=llm.gap_analysis, latex_source=llm.latex_code,
-        resume_pdf_base64=base64.b64encode(pdf_bytes).decode("ascii"),
+        stage="complete", is_qualified=True, reason=reason,
+        gap_analysis=llm.gap_analysis, latex_source=fit["latex"], page_count=pages,
+        resume_pdf_base64=base64.b64encode(fit["pdf"]).decode("ascii"),
     )
 
 

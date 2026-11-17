@@ -166,7 +166,11 @@ function renderRun(run) {
       el("div", { cls: "row" }, [button("Download .tex", () => send({ type: "download", kind: "tex" }), "primary"), dismiss]),
     ]);
   } else if (r.stage === "complete") {
-    renderMessage("ok", `Resume ready for ${title}`, "The PDF was saved to your Downloads/AutoApplier folder. Open it and review it before you apply.", [
+    const overflow = r.page_count > 1;
+    const note = r.reason && r.reason !== "Resume generated." ? r.reason : "";
+    renderMessage(overflow ? "warn" : "ok", overflow ? `Resume is ${r.page_count} pages` : `Resume ready for ${title}`,
+      "The PDF was saved to your Downloads/AutoApplier folder. Open it and review it before you apply.", [
+      note ? el("p", { text: note }) : null,
       r.gap_analysis ? el("p", { cls: "muted", text: r.gap_analysis }) : null,
       el("div", { cls: "row" }, [
         button("Download PDF again", () => send({ type: "download", kind: "pdf" }), "primary"),

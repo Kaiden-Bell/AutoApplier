@@ -175,3 +175,16 @@ def test_oversized_input_rejected(client):
 
 def test_unknown_request_404(client):
     assert client.get("/api/requests/nope", headers=HEADERS).status_code == 404
+
+
+def test_overlong_resume_is_reported(client, compile_result):
+    compile_result["value"] = (b"%PDF-1.5", "Output written on resume.pdf (2 pages, 999 bytes).")
+    result = wait_done(client, submit(client))["result"]
+    assert result["stage"] == "complete" and result["page_count"] == 2
+    assert "2 pages" in result["reason"]
+
+
+def test_one_page_resume_reports_page_count(client, compile_result):
+    compile_result["value"] = (b"%PDF-1.5", "Output written on resume.pdf (1 page, 999 bytes).")
+    result = wait_done(client, submit(client))["result"]
+    assert result["page_count"] == 1 and result["reason"] == "Resume generated."
