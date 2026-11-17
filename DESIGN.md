@@ -1,8 +1,9 @@
 # AutoApplier — Design Document
 
-**Status (2026-09-10):** Phase 2 in progress: an API prototype wraps the local pipeline;
-compiler integration awaits verification. Google sign-in, credits, billing, and the extension
-are planned. Public launch requires the account and payment gates in §10.
+**Status (2026-11-17):** Private MVP complete. The FastAPI backend (criteria gate → LLM →
+LaTeX guard → restricted compile) and the MV3 extension work end to end behind a shared dev key.
+The tests run against real `pdflatex`. Google sign-in, credits, and billing are still planned.
+Public launch requires the account and payment gates in §10.
 
 **Public service model:** Google sign-in before generation; **3 free successful resume creations
 per Google account, granted once**, then prepaid credits. The backend owns all balances and
@@ -37,8 +38,9 @@ other users could point their own extension installs at.
 
 ## 3. Architecture Overview
 
-This is the public-launch target. The current route still uses a shared key and has no
-account/credit/payment integration; the diagram is not a claim that those parts are implemented.
+This is the public-launch target. The private MVP implements everything except sign-in,
+sessions, credits, and purchases. It uses a shared key, and request state is in memory (§7).
+The diagram is not a claim that those parts are implemented.
 
 ```
 [ User's Browser ]
@@ -79,53 +81,47 @@ account/credit/payment integration; the diagram is not a claim that those parts 
   Consider Subscription → Per month quota of credits per plan.
 ```
 
-## 4. Target Repository Structure
+## 4. Repository Structure
 
-New account/billing modules below are planned responsibilities, not existing files. Keep the
-existing pipeline functions and add API/account integration around them.
+Files marked *planned* are placeholders for Phase 2b/4.
 
 ```text
 AutoApplier/
-├── DESIGN.md
-├── README.md
-├── .github/
-│   └── workflows/
-│       └── main.yml            # test backend, package + release extension
+├── DESIGN.md, README.md
+├── Dockerfile                    # python:3.12-slim + TeX Live; uvicorn, single worker
+├── requirements.txt, requirements-dev.txt, .env.example
+├── .github/workflows/main.yml    # backend tests w/ pdflatex, extension checks + zip, image smoke test
+├── prompts/
+│   └── resume_builder_prompt.txt
 ├── src/
-│   └── compiler.py              # existing filepath-based compiler, shared with the API
-├── backend/                     # FastAPI proxy (deployed, e.g. Render)
-│   ├── main.py                  # /api/tailor route
-│   ├── schemas.py               # pydantic request/response models
-│   ├── security.py              # target: session authorization + durable request limits
-│   ├── auth.py                  # planned: Google sign-in, backend sessions, logout
-│   ├── credits.py               # planned: free grants, reservations, settlement, ledger
-│   ├── billing.py               # planned: checkout, signed webhooks, payment reconciliation
-│   ├── db.py                    # planned: transactional account/usage/payment persistence
-│   ├── migrations/              # planned: schema and uniqueness constraints
-│   ├── criteria_matcher.py      # ported from src/, now accepts criteria as a dict
-│   ├── llm_engine.py            # ported from src/, called in-process instead of via CLI
-│   ├── latex_guard.py           # validates model LaTeX before it reaches pdflatex
-│   ├── compiler.py              # API adapter around src/compiler.py; temporary request files
-│   ├── prompts/
-│   │   └── resume_builder_prompt.txt
-│   ├── criteria.json            # default criteria; users override from the extension
-│   ├── requirements.txt
-│   └── tests/
-└── extension/                    # Chromium extension (Chrome/Edge/Brave)
-    ├── manifest.json             # MV3; pinned "key" for a stable extension ID
-    ├── jsonld.js                 # schema.org JobPosting extractor
+│   ├── compiler.py               # filepath-based pdflatex wrapper, shared with the API
+│   └── backend/                  # FastAPI proxy (run: PYTHONPATH=src uvicorn backend.main:app)
+│       ├── main.py               # /health, POST /api/tailor, GET /api/requests/{id}
+│       ├── schemas.py            # pydantic request/response + LLMResult structured output
+│       ├── config.py             # env settings, repo paths
+│       ├── criteria_matcher.py   # criteria gate; takes criteria as a dict
+│       ├── criteria.json         # default criteria (mirrors extension/criteria.json)
+│       ├── llm_engine.py         # strict structured-output OpenAI call
+│       ├── latex_guard.py        # validates model LaTeX before pdflatex
+│       ├── compile_adapter.py    # temp-dir adapter around src/compiler.py
+│       ├── jobs.py               # in-memory request store + worker pool + idempotency
+│       ├── security.py           # shared dev key + in-process per-IP limiter
+│       ├── auth.py               # planned: Google sign-in, sessions, logout
+│       ├── credits.py            # planned: free grants, reservations, settlement, ledger
+│       ├── billing.py            # planned: checkout, signed webhooks, reconciliation
+│       └── db.py                 # planned: transactional persistence + migrations
+├── tests/                        # pytest (API, matcher, guard, LLM errors, real compile) + node
+└── extension/                    # Chromium MV3 extension (Chrome/Edge/Brave)
+    ├── manifest.json             # activeTab + scripting, downloads, storage; localhost backend
+    ├── jsonld.js                 # schema.org JobPosting extractor (injected on click)
     ├── content_script.js         # runs jsonld.js, falls back to page heuristics
     ├── background.js             # service worker — the only code that calls the backend
-    ├── welcome.html              # instructions, Google sign-in, link to settings
-    ├── options.html              # criteria fields and CV/resume upload
-    ├── options.js                # criteria → storage.sync; CV content → storage.local
-    ├── popup.html                # posting confirmation, credits, purchase, PDF download
-    └── popup.js                  # storage, messaging, account state, PDF download
+    ├── popup.html / popup.js     # posting confirmation, run status, PDF/.tex download
+    ├── options.html / options.js # backend URL/key + CV → storage.local; criteria → storage.sync
+    ├── welcome.html              # opened on install: setup instructions
+    ├── ui.css
+    └── criteria.json             # bundled default criteria
 ```
-
-The current `src/`, `prompts/`, `criteria.json`, and `tests/` at the repo root map directly into
-the API integration (see the reuse table below). In particular, `src/compiler.py` remains the
-shared file-based compiler; `backend/compiler.py` adapts request text and PDF bytes around it.
 
 ## 5. Pipeline Walkthrough
 
@@ -173,11 +169,10 @@ There are no per-site CSS selectors, no crawling, and no background activity: on
 always user-initiated.
 
 ### 5.2 Criteria Matching
-`src/criteria_matcher.py` provides the original criteria gate — checking title tokens against
+`src/backend/criteria_matcher.py` provides the criteria gate — checking title tokens against
 `target_tokens` / `banned_tokens` / `allowed_locations` and parsing pay against the minimum
 thresholds. The **evaluation** runs in the backend before credit reservation and the LLM call.
-The current backend port and original CLI matcher coexist; their behavior differences need
-review rather than being assumed identical. The **configuration** belongs to the user: the
+It replaced the original CLI matcher. The **configuration** belongs to the user: the
 extension's options GUI writes it to `chrome.storage.sync` and sends it in the request body, and the backend
 falls back to the bundled `criteria.json` when a request omits it (§8.1).
 
@@ -252,7 +247,35 @@ content, and manually submits it through the job board's own application flow.
 The Chrome API names are `chrome.storage.sync` and `chrome.storage.local`; see the
 [official storage reference](https://developer.chrome.com/docs/extensions/reference/api/storage).
 
-## 7. temp
+## 7. Private MVP Implementation Notes
+
+The MVP departs from, or fills gaps in, the target design in these ways:
+
+- **Asynchronous requests.** An MV3 service worker is terminated when a single `fetch()` waits
+  more than 30 seconds, and LLM drafting can exceed that.
+  - `POST /api/tailor` runs the criteria gate inline. A rejection returns `200` with a
+    finished result (`stage: "criteria"`).
+  - Otherwise it queues the generation and returns `202 {request_id, status: "running"}`.
+    The extension polls `GET /api/requests/{request_id}` every 3s until `status` is `done`
+    (with a `result`) or `error`.
+  - An optional `Idempotency-Key` returns the same request on retry, and `409` if reused with
+    different input.
+  - Results stay in memory for `AUTOAPPLIER_JOB_TTL` (15 min), which also allows re-download
+    after a lost response. The API must run as a single process until request state moves to
+    the database (§8.7).
+- **Shared key, fail closed.** Every `/api` route requires `X-AutoApplier-Key`. If the server
+  has no key configured it answers `503`. The per-IP limiter counts only requests that reach
+  the model. Criteria rejections are free.
+- **Criteria matching.** Title tokens match whole words, case-insensitively, so `ii` no longer
+  matches "Hawaii". The pay parser handles `k` suffixes, ranges, and monthly figures, and no
+  longer reads `$20000 / year` as `$200/hour`. An empty list or a `0` minimum disables a check.
+- **Compilation.** `src/compiler.py` runs with `-no-shell-escape`, `openin_any=p` /
+  `openout_any=p`, `-halt-on-error`, and a 30s timeout, in a per-request temporary directory.
+  The image runs as a non-root user. A test confirms that `\input{/etc/hostname}` is blocked.
+- **CV input.** Paste or load a .txt/.tex/.md file (≤ 50k characters). PDF text extraction is
+  not supported yet.
+- **Extraction.** The content scripts are injected only on click (`activeTab` + `scripting`),
+  so the extension needs no broad host permissions.
 
 
 ## 8. Resolved Decisions
@@ -452,6 +475,8 @@ Proposed API responsibilities, to implement alongside the existing route:
 | `POST /api/billing/checkout` | Authenticated purchase of a server-defined credit pack; return hosted checkout URL |
 | `POST /api/billing/webhook` | Provider-authenticated webhook endpoint; verify signatures instead of requiring a browser session |
 
+The asynchronous `POST /api/tailor` / `GET /api/requests/{id}` contract is implemented (§7).
+
 For generation, use `401` for missing/expired authentication, `402` with a stable
 `insufficient_credits` code for exhausted balance, `409` for conflicting request-key reuse,
 `422` for invalid input, and `429` for attempt limits. Document how duplicate in-progress and
@@ -471,8 +496,12 @@ complete outcomes within this account-aware contract. These additions are not in
 
 ## 9. CI/CD
 
-**Current state:** `.github/workflows/main.yml` exists but is empty so currently there is no working CI/deployment pipeline established by
-these files.
+**Current state:** `.github/workflows/main.yml` runs on every push and PR:
+- Backend pytest with TeX Live installed; the job fails if any test is skipped.
+- Extension syntax checks, JSON-LD parser tests, and a zipped extension artifact.
+- A Docker build with a `/health` smoke test.
+
+Deployment is not automated yet.
 
 Target workflow:
 
@@ -491,7 +520,8 @@ Target workflow:
 
 ## 10. Roadmap
 
-Statuses below reflect repository inspection on 2026-09-10. **Current work is Phase 2.**
+Statuses below reflect the repository on 2026-11-17. **The private MVP (the API half of Phase 2
+and Phase 3 without accounts) is complete. Next are the Phase 2 account/credit items.**
 Authentication and credits are now Phase 2 backend requirements; payment and abuse controls are
 public-launch requirements, not features deferred until after launch. Phases 2–3 may overlap
 against agreed API contracts, but public availability waits for Phase 4.
@@ -500,31 +530,34 @@ against agreed API contracts, but public availability waits for Phase 4.
 
 - [x] Existing `src/` CLI, criteria matcher, LLM engine, file-based compiler, prompt, and fixtures.
 - [x] Original matcher runner reported 12 passing cases in the initial review.
-- [ ] Verify a full CLI → model → PDF smoke run; no live model run was performed in that review.
+- [x] The CLI entry point was retired; the API (Phase 2) replaces it. A live model → PDF run is
+  tracked in Phase 2.
 
 This establishes the starting code to reuse, not a claim that every edge case is correct.
 
-### Phase 2 — API integration and account/credit foundation: in progress
+### Phase 2 — API integration and account/credit foundation: API done, accounts/credits pending
 
 Present in the repository:
 
-- [] `/health`, `/api/tailor`, request/response models, criteria gate, model integration,
-  LaTeX validation, and compile-failure responses.
+- [x] `/health`, `/api/tailor`, `/api/requests/{id}`, request/response models, criteria gate,
+  model integration, LaTeX validation, and compile-failure responses.
 - [x] Compiler adapter delegates to `src/compiler.py`, retaining the file interface and adding
   per-request temporary directories and explicit API restrictions/timeouts.
-- [] Private-development shared-key check and in-process rate limiter.
-- [] Backend pipeline/compiler tests and new file-path/failure regression cases.
+- [x] Private-development shared-key check and in-process rate limiter.
+- [x] Backend pipeline/compiler tests and new file-path/failure regression cases.
 
-Remaining work:
+Done in the private MVP:
 
-- [ ] Run the updated backend tests. The **pre-adjustment** run had 46 passes and 4 compiler
-  failures; the subsequent compiler edits/new regression cases have only had syntax/diff checks
-  in this session. Do not claim the modified suite is green until rerun.
-- [ ] Fix and cover the inherited free-text salary parsing issue (`$20000 / year` can be
-  interpreted as `$200/hour`); review criteria/LLM changes against the original implementation.
-- [ ] Add declared backend/test dependencies and reproducible API startup instructions.
-- [ ] Add model error-path tests and API handling for refusal, malformed/empty output, and
-  upstream failures. Verify a controlled live-model-to-PDF run separately.
+- [x] Backend suite green, including real `pdflatex` tests in the Docker image and CI.
+- [x] Fix and cover the free-text salary parsing issue (`$20000 / year` was read as `$200/hour`).
+  Title tokens now match whole words, case-insensitively.
+- [x] Declared backend/test dependencies, Dockerfile, and reproducible startup instructions.
+- [x] Model error-path tests and API handling for refusal, malformed/empty output, and
+  upstream failures.
+- [ ] Verify a controlled live-model-to-PDF run with a real `OPENAI_API_KEY`.
+
+Remaining account/credit work:
+
 - [ ] Implement Google sign-in, verified account creation, expiring/revocable sessions, and logout.
 - [ ] Implement database migrations, once-only 3-credit grants, atomic reservations/settlement,
   request-key deduplication, stale-work recovery, and account/request status endpoints.
@@ -534,17 +567,18 @@ Remaining work:
 Exit: reproducible API with passing tests, verified PDF generation, and durable authenticated
 free-credit enforcement. This is still a private/staging service until the public-launch gate.
 
-### Phase 3 — Extension and complete user journey: not started
+### Phase 3 — Extension and complete user journey: private MVP done, accounts pending
 
-`extension/` is currently empty.
-
-- [ ] Create the MV3 manifest, introductory page, Google sign-in/session flow, and settings UI.
-- [ ] Save/reload criteria in `chrome.storage.sync`; implement CV upload, text extraction, size
-  handling, and persistence in `chrome.storage.local`.
-- [ ] Implement JSON-LD extraction, editable fallback, and user confirmation.
-- [ ] Make authenticated service-worker requests with stable keys across retries; show credit
-  balance, pending/failed states, payment-required state, and session-expiry recovery.
-- [ ] Implement PDF download and browser review; add the purchase entry point for Phase 4 checkout.
+- [x] MV3 manifest, introductory page, and settings UI. (Google sign-in/session flow: pending.)
+- [x] Save/reload criteria in `chrome.storage.sync`. CV paste or plain-text file upload (.txt/.tex/
+  .md, 50k chars) persisted in `chrome.storage.local`. PDF text extraction is not supported.
+- [x] JSON-LD extraction, editable heuristic fallback, and user confirmation.
+- [x] Service-worker requests with stable idempotency keys across retries, pending/failed states,
+  and recovery after the popup closes. (Credit balance, payment-required, session expiry: pending.)
+- [x] PDF download and browser review. (Purchase entry point: pending Phase 4.)
+- [x] Headless Chromium run of the unpacked extension against the Dockerized backend, with only
+  the LLM call stubbed: JSON-LD and heuristic extraction, closing the popup mid-run, PDF download,
+  result restored on reopen, and criteria rejection.
 - [ ] Verify the full browser flow, including extension reopen, account switching, retries,
   cancellation, missing CV, and exhausted free credits. Verify targeted Chromium browsers.
 
