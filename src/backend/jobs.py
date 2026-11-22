@@ -37,7 +37,7 @@ class JobStore:
     def submit(self, fn, idempotency_key=None, fingerprint=""):
         """
             Runs fn() in the background and returns (request_id, created). fn returns a
-            TailorResult or raises; an exception's message becomes the error string.
+            TailorResult or CVParseResult, or raises; an exception's message becomes the error string.
             Reusing an idempotency key returns the existing request without new work, or raises
             IdempotencyConflict if the input fingerprint differs.
         """

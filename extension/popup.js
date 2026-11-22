@@ -31,9 +31,10 @@ function button(label, onClick, cls) {
 // ---------- setup banner ----------
 
 async function checkSetup() {
-  const { resumeText, apiKey } = await chrome.storage.local.get(["resumeText", "apiKey"]);
+  const { resumeText, apiKey, masterCv } = await chrome.storage.local.get(["resumeText", "apiKey", "masterCv"]);
   const missing = [];
   if (!resumeText || !resumeText.trim()) missing.push("your master CV");
+  else if (!masterCv) missing.push("your CV's sections (save your CV again)");
   if (!apiKey) missing.push("the backend API key");
   $("setup-banner").hidden = missing.length === 0;
   $("setup-text").textContent = missing.length ? `Add ${missing.join(" and ")} in settings before tailoring.` : "";
@@ -168,9 +169,16 @@ function renderRun(run) {
   } else if (r.stage === "complete") {
     const overflow = r.page_count > 1;
     const note = r.reason && r.reason !== "Resume generated." ? r.reason : "";
+    const fixes = r.selection_notes && r.selection_notes.length
+      ? el("div", {}, [
+          el("p", { cls: "muted", text: "AutoApplier corrected the model's choices:" }),
+          el("ul", { cls: "muted" }, r.selection_notes.map((n) => el("li", { text: n }))),
+        ])
+      : null;
     renderMessage(overflow ? "warn" : "ok", overflow ? `Resume is ${r.page_count} pages` : `Resume ready for ${title}`,
       "The PDF was saved to your Downloads/AutoApplier folder. Open it and review it before you apply.", [
       note ? el("p", { text: note }) : null,
+      fixes,
       r.gap_analysis ? el("p", { cls: "muted", text: r.gap_analysis }) : null,
       el("div", { cls: "row" }, [
         button("Download PDF again", () => send({ type: "download", kind: "pdf" }), "primary"),
@@ -193,7 +201,7 @@ async function init() {
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "session" && changes.lastRun) renderRun(changes.lastRun.newValue);
-    if (area === "local" && (changes.resumeText || changes.apiKey)) checkSetup();
+    if (area === "local" && (changes.resumeText || changes.apiKey || changes.masterCv)) checkSetup();
   });
 
   [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });

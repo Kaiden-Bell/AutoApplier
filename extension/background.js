@@ -21,6 +21,7 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const handlers = {
     tailor: () => startTailor(message.job),
+    parseCv: () => parseCv(message.text),
     resume: () => resumeIfNeeded(),
     download: () => downloadFromLastRun(message.kind),
     health: () => checkHealth(),
@@ -42,12 +43,13 @@ async function defaultCriteria() {
 }
 
 async function getConfig() {
-  const local = await chrome.storage.local.get(["backendUrl", "apiKey", "resumeText"]);
+  const local = await chrome.storage.local.get(["backendUrl", "apiKey", "resumeText", "masterCv"]);
   const { criteria } = await chrome.storage.sync.get("criteria");
   return {
     backendUrl: (local.backendUrl || DEFAULT_BACKEND_URL).replace(/\/+$/, ""),
     apiKey: local.apiKey || "",
     resumeText: local.resumeText || "",
+    masterCv: local.masterCv || null,
     criteria: criteria || (await defaultCriteria()),
   };
 }
@@ -130,6 +132,7 @@ function startKeepAlive() {
 async function startTailor(job) {
   const cfg = await getConfig();
   if (!cfg.resumeText.trim()) throw new Error("Add your master CV in AutoApplier settings first.");
+  if (!cfg.masterCv) throw new Error("Your CV's sections haven't been read yet. Open AutoApplier settings and save your CV.");
   if (!cfg.apiKey) throw new Error("Add the backend API key in AutoApplier settings first.");
   if (!job || !String(job.description || "").trim()) throw new Error("The job description is empty.");
 
@@ -161,7 +164,7 @@ async function submitAndPoll(run, cfg, job) {
         description: job.description,
         url: job.url || null,
       },
-      resume_text: cfg.resumeText,
+      master_cv: cfg.masterCv,
       criteria: cfg.criteria,
     };
 
@@ -243,6 +246,39 @@ async function finish(run, data) {
   const done = await setRun({ ...run, status: "done", result, finishedAt: Date.now() });
   if (result && result.stage === "complete" && result.resume_pdf_base64) {
     await downloadPdf(done);
+  }
+}
+
+// ---------- CV parsing ----------
+
+let parseActive = false;
+
+// Splits the CV text into sections on the backend (one LLM call). Called from the settings page,
+// which waits for the result; polling keeps each fetch short, as with tailoring.
+async function parseCv(text) {
+  const cfg = await getConfig();
+  if (!cfg.apiKey) throw new Error("Add the backend API key above first.");
+  if (!String(text || "").trim()) throw new Error("The CV is empty.");
+  if (parseActive) throw new Error("Your CV is already being read. Wait for it to finish.");
+
+  parseActive = true;
+  const stopKeepAlive = startKeepAlive();
+  try {
+    const job = { startedAt: Date.now(), requestId: null };
+    let data = await api(cfg, "/api/cv/parse", {
+      method: "POST",
+      body: { resume_text: text },
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+    });
+    if (data.status === "running") {
+      job.requestId = data.request_id;
+      data = await pollUntilDone(job, cfg);
+    }
+    if (data.status === "error") throw new Error(data.error || "Reading the CV failed.");
+    return data.result;
+  } finally {
+    parseActive = false;
+    stopKeepAlive();
   }
 }
 

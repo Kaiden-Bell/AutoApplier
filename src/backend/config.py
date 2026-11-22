@@ -12,6 +12,7 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BACKEND_DIR.parents[1]
 PROMPT_PATH = REPO_ROOT / "prompts" / "resume_builder_prompt.txt"
+CV_PARSE_PROMPT_PATH = REPO_ROOT / "prompts" / "cv_parse_prompt.txt"
 DEFAULT_CRITERIA_PATH = BACKEND_DIR / "criteria.json"
 
 

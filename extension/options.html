@@ -12,6 +12,12 @@
     .status { margin-left: 8px; font-size: 13px; }
     .status.ok { color: var(--ok); }
     .status.err { color: var(--err); }
+    .cv-section { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; margin: 8px 0; background: var(--surface); }
+    .cv-section .row { align-items: flex-end; }
+    .cv-section label { margin-top: 0; }
+    .cv-section select { padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font: inherit; }
+    .cv-section ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
+    #unmatched li { font-size: 12px; }
   </style>
 </head>
 <body>
@@ -45,6 +51,21 @@
     <div class="row">
       <button id="save-resume" class="primary">Save CV</button>
       <span id="resume-status" class="status"></span>
+    </div>
+
+    <div id="sections-panel" hidden>
+      <h2>Your CV's sections</h2>
+      <p class="muted">Saving your CV reads it into sections (one model call). Tailored resumes keep every entry under the section it comes from, so check that each section has the right type. For example, jobs and freelance work belong under <b>experience</b> and personal or school projects under <b>projects</b>. To change the wording or move an entry, edit the CV text above and save it again.</p>
+      <div id="unmatched" hidden>
+        <p class="status err">Some lines don't match your CV text word for word. Check that nothing was reworded:</p>
+        <ul></ul>
+      </div>
+      <div id="sections-list"></div>
+      <div class="row">
+        <button id="save-sections" class="primary">Save sections</button>
+        <button id="reparse">Read sections again</button>
+        <span id="sections-status" class="status"></span>
+      </div>
     </div>
   </section>
 

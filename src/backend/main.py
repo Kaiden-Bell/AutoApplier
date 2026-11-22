@@ -16,20 +16,21 @@ from typing import Optional
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import latex_guard, llm_engine, page_fit
+from . import latex_guard, llm_engine, page_fit, render, resume_model
 from .config import Settings, load_default_criteria
 from .criteria_matcher import eval_job_criteria
 from .jobs import IdempotencyConflict, JobStore
-from .schemas import RequestStatus, TailorRequest, TailorResult
+from .schemas import CVParseRequest, CVParseResult, RequestStatus, TailorRequest, TailorResult
 from .security import RateLimiter, client_ip, make_api_key_dependency
 
 log = logging.getLogger("autoapplier")
 
 
 def run_pipeline(req: TailorRequest, settings: Settings) -> TailorResult:
-    """LLM → LaTeX validation → compile. The criteria gate has already passed."""
+    """LLM selection → selection check → render → LaTeX check → compile. Criteria already passed."""
+    master_cv = resume_model.assign_ids(req.master_cv)
     try:
-        llm = llm_engine.generate(req.job, req.resume_text, settings.openai_model)
+        llm = llm_engine.generate(req.job, master_cv, settings.openai_model)
     except llm_engine.LLMError:
         raise
     except Exception:
@@ -43,21 +44,28 @@ def run_pipeline(req: TailorRequest, settings: Settings) -> TailorResult:
             gap_analysis=llm.gap_analysis,
         )
 
-    problems = latex_guard.check_latex(llm.latex_code)
+    sections, notes = resume_model.check_selection(master_cv, llm)
+    if not any(s.kind != "education" for s in sections):
+        raise llm_engine.LLMError("The model selected no usable CV content for this resume.")
+    latex = render.render_resume(master_cv.contact, sections)
+
+    # The renderer escapes all CV text, so this is a backstop rather than the main defense.
+    problems = latex_guard.check_latex(latex)
     if problems:
         return TailorResult(
             stage="compile", is_qualified=True,
-            reason="The generated LaTeX failed validation and was not compiled.",
-            gap_analysis=llm.gap_analysis, latex_source=llm.latex_code,
-            compile_log="\n".join(problems),
+            reason="The rendered LaTeX failed validation and was not compiled.",
+            gap_analysis=llm.gap_analysis, latex_source=latex,
+            compile_log="\n".join(problems), selection_notes=notes,
         )
 
-    fit = page_fit.compile_one_page(llm.latex_code, timeout=settings.compile_timeout_seconds)
+    fit = page_fit.compile_one_page(latex, timeout=settings.compile_timeout_seconds)
     if fit["pdf"] is None:
         return TailorResult(
             stage="compile", is_qualified=True,
             reason="pdflatex could not compile the generated resume. Fix the LaTeX source by hand.",
-            gap_analysis=llm.gap_analysis, latex_source=llm.latex_code, compile_log=fit["log"],
+            gap_analysis=llm.gap_analysis, latex_source=latex, compile_log=fit["log"],
+            selection_notes=notes,
         )
 
     pages = fit["pages"] or 0
@@ -72,11 +80,23 @@ def run_pipeline(req: TailorRequest, settings: Settings) -> TailorResult:
     return TailorResult(
         stage="complete", is_qualified=True, reason=reason,
         gap_analysis=llm.gap_analysis, latex_source=fit["latex"], page_count=pages,
-        resume_pdf_base64=base64.b64encode(fit["pdf"]).decode("ascii"),
+        resume_pdf_base64=base64.b64encode(fit["pdf"]).decode("ascii"), selection_notes=notes,
     )
 
 
-def _fingerprint(req: TailorRequest):
+def run_parse(req: CVParseRequest, settings: Settings) -> CVParseResult:
+    try:
+        master_cv = llm_engine.parse_cv(req.resume_text, settings.openai_model)
+    except llm_engine.LLMError:
+        raise
+    except Exception:
+        log.exception("Unexpected error during CV parsing")
+        raise RuntimeError("Unexpected server error while parsing the CV.")
+    return CVParseResult(master_cv=master_cv,
+                         unmatched_bullets=resume_model.unmatched_bullets(master_cv, req.resume_text))
+
+
+def _fingerprint(req):
     return hashlib.sha256(req.model_dump_json().encode("utf-8")).hexdigest()
 
 
@@ -144,6 +164,27 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         except IdempotencyConflict:
             raise HTTPException(409, "Idempotency-Key was already used with different input.")
 
+        response.status_code = 202
+        return store.get(request_id) or RequestStatus(request_id=request_id, status="running")
+
+    @app.post(
+        "/api/cv/parse",
+        dependencies=[Depends(require_api_key)],
+        responses={202: {"model": RequestStatus}, 200: {"model": RequestStatus}},
+    )
+    def parse_cv(
+        req: CVParseRequest, request: Request, response: Response,
+        idempotency_key: Optional[str] = Header(default=None, max_length=200),
+    ) -> RequestStatus:
+        if not limiter.allow(client_ip(request)):
+            raise HTTPException(429, "Too many generation requests; try again in a minute.")
+        try:
+            request_id, _ = store.submit(
+                lambda: run_parse(req, settings),
+                idempotency_key=idempotency_key, fingerprint="parse:" + _fingerprint(req),
+            )
+        except IdempotencyConflict:
+            raise HTTPException(409, "Idempotency-Key was already used with different input.")
         response.status_code = 202
         return store.get(request_id) or RequestStatus(request_id=request_id, status="running")
 

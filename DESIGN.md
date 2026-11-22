@@ -48,6 +48,7 @@ The diagram is not a claim that those parts are implemented.
       └── Sign in with Google → backend session and account balance
       └── Settings: save criteria to chrome.storage.sync
       └── Upload CV/resume: save its content to chrome.storage.local
+      └── POST /api/cv/parse once per CV text → sections the user reviews (§5.3)
   └── Content script: JSON-LD JobPosting → else pre-filled form → user confirms
       └── Reads master CV from chrome.storage.local
       └── Reads criteria from chrome.storage.sync
@@ -55,18 +56,19 @@ The diagram is not a claim that those parts are implemented.
             ▼  chrome.runtime.sendMessage
   └── Background service worker (adds user session and Idempotency-Key)
             │
-            ▼  HTTPS POST /api/tailor  { job, resume_text, criteria }
+            ▼  HTTPS POST /api/tailor  { job, master_cv, criteria }
 [ FastAPI Proxy Backend ]
   0. Verify session; enforce durable account/IP attempt and concurrency limits
   1. Criteria gate (deterministic title/location/pay check) — stops here if it fails
   2. Database: deduplicate request and atomically reserve 1 available credit
      └── No credit → payment required; do not call the LLM (use sqlite)
-  3. LLM call → { is_qualified, gap_analysis, latex_code }
-  4. If qualified: validate latex_code, then compile → PDF (restricted pdflatex, temp dir)
+  3. LLM call → { is_qualified, gap_analysis, sections (IDs from master_cv) }
+  4. If qualified: check/repair the selection, render LaTeX from the template, then
+     compile → PDF (restricted pdflatex, temp dir)
   5. Database: consume reservation on successful PDF; release on rejection/failure; require timeout
             │
             ▼  { stage, is_qualified, reason, gap_analysis,
-                 latex_source, resume_pdf_base64, compile_log,
+                 latex_source, resume_pdf_base64, compile_log, selection_notes,
                  request_id, credit_outcome }
 [ Extension ]
   └── Offers the completed PDF for download, shows a rejection/gap analysis, or —
@@ -92,17 +94,21 @@ AutoApplier/
 ├── requirements.txt, requirements-dev.txt, .env.example
 ├── .github/workflows/main.yml    # backend tests w/ pdflatex, extension checks + zip, image smoke test
 ├── prompts/
-│   └── resume_builder_prompt.txt
+│   ├── cv_parse_prompt.txt       # CV text → typed sections (transcription only)
+│   └── resume_builder_prompt.txt # qualification + selection of CV IDs
 ├── src/
 │   ├── compiler.py               # filepath-based pdflatex wrapper, shared with the API
 │   └── backend/                  # FastAPI proxy (run: PYTHONPATH=src uvicorn backend.main:app)
-│       ├── main.py               # /health, POST /api/tailor, GET /api/requests/{id}
-│       ├── schemas.py            # pydantic request/response + LLMResult structured output
+│       ├── main.py               # /health, POST /api/cv/parse, POST /api/tailor, GET /api/requests/{id}
+│       ├── schemas.py            # pydantic request/response, MasterCV, structured outputs
 │       ├── config.py             # env settings, repo paths
 │       ├── criteria_matcher.py   # criteria gate; takes criteria as a dict
 │       ├── criteria.json         # default criteria (mirrors extension/criteria.json)
-│       ├── llm_engine.py         # strict structured-output OpenAI call
-│       ├── latex_guard.py        # validates model LaTeX before pdflatex
+│       ├── llm_engine.py         # strict structured-output OpenAI calls (parse, select)
+│       ├── resume_model.py       # IDs, parse fidelity check, selection check/repair
+│       ├── render.py             # LaTeX template + escaping
+│       ├── latex_guard.py        # backstop check on rendered LaTeX before pdflatex
+│       ├── page_fit.py           # recompiles with tighter layout until one page
 │       ├── compile_adapter.py    # temp-dir adapter around src/compiler.py
 │       ├── jobs.py               # in-memory request store + worker pool + idempotency
 │       ├── security.py           # shared dev key + in-process per-IP limiter
@@ -117,7 +123,7 @@ AutoApplier/
     ├── content_script.js         # runs jsonld.js, falls back to page heuristics
     ├── background.js             # service worker — the only code that calls the backend
     ├── popup.html / popup.js     # posting confirmation, run status, PDF/.tex download
-    ├── options.html / options.js # backend URL/key + CV → storage.local; criteria → storage.sync
+    ├── options.html / options.js # backend URL/key + CV + reviewed sections → storage.local; criteria → storage.sync
     ├── welcome.html              # opened on install: setup instructions
     ├── ui.css
     └── criteria.json             # bundled default criteria
@@ -136,12 +142,12 @@ AutoApplier/
 3. The user uploads their master CV/resume. Its content is saved in `chrome.storage.local`,
    which provides more room than sync storage, and is reused for later tailoring requests.
 4. The user visits a job posting, invokes tailoring, and confirms the extracted posting fields.
-   The extension sends the job, saved CV text, and saved criteria with its session and a unique
+   The extension sends the job, the saved CV sections (§5.3), and saved criteria with its session and a unique
    request key. It displays the server-reported remaining free/paid credits.
 5. The backend authenticates the user, checks attempt limits, applies the criteria gate, and
    reserves a credit before calling the LLM. A zero available balance prompts purchase without
-   a model call. For a qualified result, it parses the returned JSON's `latex_code`, writes
-   that source to a temporary `.tex` file, and passes the filepath to the existing compiler through the API adapter.
+   a model call. For a qualified result, it checks the model's ID selection against the CV, renders
+   the LaTeX from a fixed template, and compiles it through the API adapter.
 6. A successfully produced PDF consumes one credit; rejection or generation/compilation failure
    releases the reservation (§8.7). The extension offers the resulting PDF for download. The user
    downloads it, opens it in their own browser's PDF viewer, and reviews it before applying
@@ -186,15 +192,49 @@ set title(e.g. `i`)/pay(e.g. `$30 / hr`)/location(e.g. `Las Vegas, Nevada`).
 
 Visit (§10 for more logic)
 
-### 5.3 LLM Qualification + Resume Drafting
-`src/llm_engine.py` and `prompts/resume_builder_prompt.txt` already implement the richer contract
-the pipeline needs — an OpenAI call returning JSON with `is_qualified`, `gap_analysis`, and (when
-qualified) a complete one-page `latex_code` string with double-escaped backslashes. The backend
-reuses this prompt and JSON contract as-is, but tightens the call from a loose `json_object`
-response format to a strict `json_schema` parsed into a pydantic model, so a missing key is a
-validation error rather than an unguarded `KeyError` mid-pipeline (§8.4). If `is_qualified` is
-false, the backend returns the gap analysis and stops; the credit-enabled route releases the
-reservation without consuming a credit.
+### 5.3 CV Parsing, Qualification, and Resume Selection
+The model never writes the resume. Before this change it returned a whole LaTeX document, so
+nothing checked which section an entry was printed under. In practice, a freelance job ended up
+under Projects, which matters for postings that weigh work experience separately. A fixed
+pydantic layout (for example a required `projects` list) can't fix this, because CVs are
+organized differently: some have no projects, some have detailed experience, coursework, or
+publications. So the pipeline enforces **section membership** instead:
+
+1. **Parse once** (`POST /api/cv/parse`, `prompts/cv_parse_prompt.txt`). The model transcribes the
+   CV into `ParsedCV`: contact details plus sections that keep the user's own headings. Each
+   section has a `kind` (`summary | experience | projects | education | skills | coursework |
+   certifications | publications | leadership | languages | other`) and holds entries with
+   bullets. Code assigns position-derived IDs (`s3`, `s3.e2`, `s3.e2.b1`,
+   `resume_model.assign_ids`) and flags bullets that don't appear word for word in the CV text
+   (`unmatched_bullets`). The extension stores the result, shows it in Settings so the user can
+   correct a section's heading or kind, and re-parses only when the CV text changes.
+2. **Select** (`POST /api/tailor`, `prompts/resume_builder_prompt.txt`). The request carries the
+   stored `master_cv`, and the server reassigns IDs on receipt, so client IDs are never trusted.
+   Through strict structured output (`TailoredResume`), the model returns `is_qualified`,
+   `gap_analysis`, and the section, entry and bullet IDs to print, in order. Each bullet can
+   carry an optional `rewrite`. Contact details are not sent in this prompt; code copies them
+   onto the resume.
+3. **Check and repair** (`resume_model.check_selection`). This step is deterministic and uses CV
+   content only:
+   - an entry listed under the wrong section is moved back to the section it came from;
+   - unknown or duplicate IDs, and bullets that belong to another entry, are dropped;
+   - a rewrite that adds a number the source bullet (or its entry's title or tech) doesn't
+     contain, or that grows to more than about twice the source length, falls back to the CV's
+     wording;
+   - Education is added back if the model left it out.
+
+   Each repair becomes a `selection_notes` entry that the popup shows. A selection with nothing
+   but Education fails the request.
+4. **Render** (`render.render_resume`). A fixed template lays out each section by kind: entries
+   with bullets, or compact `Label: a, b, c` lines for skills, coursework and languages. All text
+   passes through `latex_escape`. The preamble maps ligatures to Unicode so the PDF's text layer
+   reads "profile" rather than "prole" for applicant tracking systems.
+
+If `is_qualified` is false, the backend returns the gap analysis and stops. The credit-enabled
+route releases the reservation without consuming a credit.
+
+Known limit: the rewrite check catches invented numbers but not an invented tool or skill named in
+a rewrite. The prompt forbids that, and the user reviews every PDF.
 
 ### 5.4 LaTeX Compilation
 `src/compiler.py`'s `pdflatex` subprocess wrapper is reused, but the backend must generate PDFs
@@ -224,8 +264,9 @@ content, and manually submits it through the job board's own application flow.
   `chrome.storage.local`, then reused across requests. CV text is sent to the backend per-request
   and never persisted server-side. Local storage provides more capacity than sync storage and
   keeps the CV on that browser profile rather than syncing it across machines. Supported upload
-  formats and text extraction are still to be defined; the current API accepts `resume_text`,
-  so a stored upload must supply text before a tailoring request.
+  formats and text extraction are still to be defined; the parse route accepts `resume_text`,
+  so a stored upload must supply text. The parsed sections (`masterCv`) are stored next to
+  the text and are what each tailoring request sends.
 - **Criteria:** stored in `chrome.storage.sync`, so a user's thresholds follow them across
   machines when Chrome Sync is enabled (§8.1). Service sign-in is separate from browser sync;
   the backend does not need to store criteria to maintain account/credit records.
@@ -333,12 +374,15 @@ necessary; tune limits before public launch instead of relying on the free-credi
 Validation and compilation controls:
 
 1. **Strict `json_schema`** on the OpenAI call instead of `json_object`, parsed into a pydantic
-   model, so `is_qualified` / `gap_analysis` / `latex_code` are guaranteed present and typed.
-2. **A LaTeX sanity and denylist check** (`latex_guard.py`): require `\documentclass` and a
+   model, so `is_qualified` / `gap_analysis` / `sections` are guaranteed present and typed.
+2. **The model selects, code writes** (§5.3). The model returns IDs from the user's own parsed CV
+   and never authors LaTeX. Each selection is checked against the CV and repaired with CV content
+   only, and every string is escaped by the renderer.
+3. **A LaTeX sanity and denylist check** (`latex_guard.py`): require `\documentclass` and a
    matched `\begin{document}` / `\end{document}`, bound the length to catch truncated generations,
    and reject shell and file primitives (`\write18`, `\input{|`, `\openout`, `\openin`, `\read`,
    `\special`).
-3. **Restricted compilation**: `-no-shell-escape`, restricted TeX file access, a hard subprocess
+4. **Restricted compilation**: `-no-shell-escape`, restricted TeX file access, a hard subprocess
    timeout, and a per-request temp directory. A non-root deployment, resource limits, and
    verification of the untrusted-document isolation boundary remain public-launch work (§10).
 

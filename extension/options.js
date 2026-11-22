@@ -90,14 +90,115 @@ async function loadResumeFile(event) {
   setStatus("resume-status", "", `Loaded ${file.name}. Click Save CV to keep it.`);
 }
 
+async function sha256(text) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 async function saveResume() {
   const text = $("resume").value;
   if (!text.trim()) {
     setStatus("resume-status", "err", "The CV is empty.");
     return;
   }
+  const hash = await sha256(text);
+  const { masterCv, masterCvHash } = await chrome.storage.local.get(["masterCv", "masterCvHash"]);
   await chrome.storage.local.set({ resumeText: text });
-  setStatus("resume-status", "ok", "CV saved.");
+  if (masterCv && masterCvHash === hash) {
+    setStatus("resume-status", "ok", "CV saved. Its text is unchanged, so its sections were kept.");
+    return;
+  }
+  await parseResume(text, hash);
+}
+
+// ---------- CV sections ----------
+
+const SECTION_KINDS = [
+  "summary", "experience", "projects", "education", "skills", "coursework",
+  "certifications", "publications", "leadership", "languages", "other",
+];
+
+let editedCv = null;
+
+async function parseResume(text, hash) {
+  // A parse of the old text must not be used with the new text.
+  await chrome.storage.local.remove(["masterCv", "masterCvHash", "masterCvUnmatched"]);
+  renderSections(null, []);
+  $("save-resume").disabled = true;
+  $("reparse").disabled = true;
+  setStatus("resume-status", "", "CV saved. Reading its sections… this can take up to a minute.");
+  try {
+    const res = await chrome.runtime.sendMessage({ type: "parseCv", text });
+    if (!res || !res.ok) throw new Error((res && res.error) || "No response from the extension.");
+    const { master_cv: cv, unmatched_bullets: unmatched } = res.value;
+    await chrome.storage.local.set({ masterCv: cv, masterCvHash: hash, masterCvUnmatched: unmatched || [] });
+    renderSections(cv, unmatched || []);
+    setStatus("resume-status", "ok", "CV saved and read. Check its sections below.");
+  } catch (e) {
+    setStatus("resume-status", "err", `CV saved, but reading its sections failed: ${e.message}`);
+  } finally {
+    $("save-resume").disabled = false;
+    $("reparse").disabled = false;
+  }
+}
+
+async function reparse() {
+  const { resumeText } = await chrome.storage.local.get("resumeText");
+  if (!resumeText || !resumeText.trim()) {
+    setStatus("sections-status", "err", "Save your CV first.");
+    return;
+  }
+  await parseResume(resumeText, await sha256(resumeText));
+}
+
+function el(tag, props = {}, children = []) {
+  const node = Object.assign(document.createElement(tag), props);
+  children.forEach((c) => c && node.appendChild(c));
+  return node;
+}
+
+function renderSections(cv, unmatched) {
+  editedCv = cv ? structuredClone(cv) : null;
+  $("sections-panel").hidden = !cv;
+  const list = $("sections-list");
+  list.replaceChildren();
+  const missList = $("unmatched").querySelector("ul");
+  missList.replaceChildren(...(unmatched || []).map((u) => el("li", { textContent: u })));
+  $("unmatched").hidden = !unmatched || unmatched.length === 0;
+  if (!cv) return;
+
+  cv.sections.forEach((section, i) => {
+    const heading = el("input", { type: "text", value: section.heading, id: `heading-${i}` });
+    heading.addEventListener("input", () => (editedCv.sections[i].heading = heading.value));
+    const kind = el("select", { id: `kind-${i}` },
+      SECTION_KINDS.map((k) => el("option", { value: k, textContent: k })));
+    kind.value = section.kind;
+    kind.addEventListener("change", () => (editedCv.sections[i].kind = kind.value));
+
+    const entries = section.entries.map((e) => {
+      const bits = [e.title || "(untitled)", e.organization, e.dates].filter(Boolean).join(" · ");
+      const count = e.bullets.length ? ` (${e.bullets.length} ${e.bullets.length === 1 ? "item" : "items"})` : "";
+      return el("li", { textContent: bits + count });
+    });
+
+    list.appendChild(el("div", { className: "cv-section" }, [
+      el("div", { className: "row" }, [
+        el("div", { className: "grow" }, [el("label", { htmlFor: `heading-${i}`, textContent: "Heading" }), heading]),
+        el("div", {}, [el("label", { htmlFor: `kind-${i}`, textContent: "Type" }), kind]),
+      ]),
+      entries.length ? el("ul", {}, entries) : null,
+    ]));
+  });
+}
+
+async function saveSections() {
+  if (!editedCv) return;
+  if (editedCv.sections.some((s) => !s.heading.trim())) {
+    setStatus("sections-status", "err", "Every section needs a heading.");
+    return;
+  }
+  await chrome.storage.local.set({ masterCv: editedCv });
+  setStatus("sections-status", "ok", "Sections saved.");
 }
 
 // ---------- criteria ----------
@@ -140,13 +241,14 @@ async function resetCriteria() {
 // ---------- init ----------
 
 async function init() {
-  const local = await chrome.storage.local.get(["backendUrl", "apiKey", "resumeText"]);
+  const local = await chrome.storage.local.get(["backendUrl", "apiKey", "resumeText", "masterCv", "masterCvUnmatched"]);
   const { criteria } = await chrome.storage.sync.get("criteria");
 
   $("backend-url").value = local.backendUrl || DEFAULT_BACKEND_URL;
   $("api-key").value = local.apiKey || "";
   $("resume").value = local.resumeText || "";
   updateResumeCount();
+  renderSections(local.masterCv || null, local.masterCvUnmatched || []);
   fillCriteria(criteria || (await defaultCriteria()));
 
   $("save-connection").addEventListener("click", saveConnection);
@@ -154,6 +256,8 @@ async function init() {
   $("resume-file").addEventListener("change", loadResumeFile);
   $("resume").addEventListener("input", updateResumeCount);
   $("save-resume").addEventListener("click", saveResume);
+  $("save-sections").addEventListener("click", saveSections);
+  $("reparse").addEventListener("click", reparse);
   $("save-criteria").addEventListener("click", saveCriteria);
   $("reset-criteria").addEventListener("click", resetCriteria);
 }
