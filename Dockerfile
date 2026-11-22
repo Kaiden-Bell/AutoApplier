@@ -16,10 +16,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ src/
 COPY prompts/ prompts/
+COPY alembic.ini .
 
 RUN useradd --create-home --uid 10001 app
 USER app
 
 EXPOSE 2005
 # Request state is kept in memory (src/backend/jobs.py), so run exactly one worker.
+# docker-compose.yml runs `alembic upgrade head` before this.
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "2005", "--workers", "1"]

@@ -1,0 +1,39 @@
+# AutoApplier: API + Postgres. Usage:
+#   cp .env.example .env            # set OPENAI_API_KEY, POSTGRES_PASSWORD, AUTOAPPLIER_DATA_KEY
+#   docker compose up -d --build
+#   docker compose run --rm api python -m backend.admin create-account --label me
+# The API listens on 127.0.0.1:2005 only. The background worker joins in a later phase.
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: autoapplier
+      POSTGRES_DB: autoapplier
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autoapplier -d autoapplier"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      AUTOAPPLIER_DATABASE_URL: postgresql+psycopg://autoapplier:${POSTGRES_PASSWORD}@db:5432/autoapplier
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn backend.main:app --host 0.0.0.0 --port 2005 --workers 1"
+    ports:
+      - "127.0.0.1:2005:2005"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

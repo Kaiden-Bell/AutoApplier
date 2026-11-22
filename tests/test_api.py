@@ -8,12 +8,13 @@ from fastapi.testclient import TestClient
 
 from backend import compile_adapter, llm_engine
 from backend.config import Settings
+from backend.db import Database
 from backend.main import create_app
 from backend.schemas import BulletPick, EntryPick, SectionPick, TailoredResume
+from conftest import TEST_DATA_KEY, TEST_TOKEN
 from cv_fixtures import projects_and_experience_cv
 
-KEY = "test-key"
-HEADERS = {"X-AutoApplier-Key": KEY}
+HEADERS = {"X-AutoApplier-Key": TEST_TOKEN}
 CV = projects_and_experience_cv()
 
 
@@ -76,17 +77,22 @@ def compile_result(monkeypatch):
     return state
 
 
+def settings(**overrides):
+    values = dict(data_key=TEST_DATA_KEY, rate_limit_per_minute=3, worker_count=1, job_ttl_seconds=60)
+    values.update(overrides)
+    return Settings(**values)
+
+
 @pytest.fixture
-def client(llm_calls, parse_calls, compile_result):
-    app = create_app(Settings(api_key=KEY, rate_limit_per_minute=3, worker_count=1, job_ttl_seconds=60))
-    with TestClient(app) as c:
+def client(database, account_id, llm_calls, parse_calls, compile_result):
+    with TestClient(create_app(settings(), database)) as c:
         yield c
 
 
-def wait_done(client, request_id, timeout=5):
+def wait_done(client, request_id, timeout=5, headers=HEADERS):
     deadline = time.time() + timeout
     while time.time() < deadline:
-        r = client.get(f"/api/requests/{request_id}", headers=HEADERS)
+        r = client.get(f"/api/requests/{request_id}", headers=headers)
         assert r.status_code == 200
         body = r.json()
         if body["status"] != "running":
@@ -112,9 +118,10 @@ def test_rejects_missing_or_bad_key(client, headers):
     assert client.get("/api/requests/abc", headers=headers).status_code == 401
 
 
-def test_unconfigured_server_key_fails_closed(llm_calls, parse_calls, compile_result):
-    with TestClient(create_app(Settings(api_key=""))) as c:
+def test_unconfigured_database_fails_closed(llm_calls, parse_calls, compile_result):
+    with TestClient(create_app(settings(database_url=""), Database(""))) as c:
         assert c.post("/api/tailor", json=payload(), headers=HEADERS).status_code == 503
+        assert c.get("/health").json()["database_ok"] is False
 
 
 def test_criteria_rejection_skips_llm(client, llm_calls):
@@ -275,3 +282,34 @@ def test_one_page_resume_reports_page_count(client, compile_result):
     compile_result["value"] = (b"%PDF-1.5", "Output written on resume.pdf (1 page, 999 bytes).")
     result = wait_done(client, submit(client))["result"]
     assert result["page_count"] == 1 and result["reason"] == "Resume generated."
+
+
+def other_account_headers(database):
+    from backend import accounts
+    with database.session() as session:
+        _, token = accounts.create_account(session, label="other")
+    return {"X-AutoApplier-Key": token}
+
+
+def test_requests_are_private_to_their_account(client, database):
+    request_id = submit(client)
+    wait_done(client, request_id)
+    other = other_account_headers(database)
+    assert client.get(f"/api/requests/{request_id}", headers=other).status_code == 404
+
+
+def test_idempotency_keys_are_scoped_per_account(client, database, llm_calls):
+    other = other_account_headers(database)
+    mine = submit(client, headers={**HEADERS, "Idempotency-Key": "same"})
+    theirs = submit(client, payload(title="Backend Developer"), headers={**other, "Idempotency-Key": "same"})
+    assert mine != theirs
+    wait_done(client, mine)
+    wait_done(client, theirs, headers=other)
+    assert llm_calls["count"] == 2
+
+
+def test_rate_limit_is_per_account(client, database):
+    for _ in range(3):
+        submit(client)
+    assert client.post("/api/tailor", json=payload(), headers=HEADERS).status_code == 429
+    submit(client, headers=other_account_headers(database))

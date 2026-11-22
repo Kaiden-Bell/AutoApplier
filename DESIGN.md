@@ -36,6 +36,51 @@ The project is moving to a **browser extension + proxy backend** model instead:
 This also reframes the project from "a script one person runs locally" into a hostable service
 other users could point their own extension installs at.
 
+### 2.1 v2: automatic discovery, email approval, assisted apply
+
+The extension alone only tailors jobs the user finds. v2 adds always-on automation without
+giving up the reason the extension exists (the expensive, bot-sensitive browsing happens in the
+user's own browser):
+
+```
+            ┌──────────────── server (one Docker image, two commands) ────────────────┐
+ Greenhouse │  worker: poll due sources → upsert postings → match per account          │
+ Lever  ───►│          → criteria gate → LLM selection → render/compile → email         │
+ Ashby      │  api:    profile sync, matches inbox, /decide confirm page, apply status  │──► email (Y/N)
+ Simplify   │  Postgres: accounts, profiles (encrypted), sources, postings, matches,    │
+            │            tasks (queue), decision tokens, application runs               │
+            └──────────────────────────────────────────────────────────────────────────┘
+                     ▲ approved matches (poll)            │ status + screenshots
+                     │                                    ▼
+            extension (user's browser): open apply page → fill → screenshot → user clicks Submit
+```
+
+- **Sources:**
+  - Public ATS job boards that publish postings the moment the company does: Greenhouse
+    (`boards-api.greenhouse.io/v1/boards/{slug}/jobs`), Lever (`api.lever.co/v0/postings/{slug}`)
+    and Ashby (`api.ashbyhq.com/posting-api/job-board/{slug}`), for companies on the user's
+    watchlist.
+  - SimplifyJobs internship list repos.
+  - Social media and paid search APIs were rejected: no usable official APIs, terms-of-service and
+    bot-detection risk, cost, and lag behind the source boards.
+- **Scaling:**
+  - Each source is polled once for all users, so discovery cost grows with companies, not users.
+  - The free criteria gate runs per account. The LLM runs only on matches, under a daily cap per
+    account.
+  - The first poll of a new source is a baseline: existing postings are recorded, not matched.
+  - The server never runs browsers. Form filling happens in the extension.
+- **Human gate:**
+  - Each match is emailed with the tailored PDF. The Approve/Skip links open a confirmation page,
+    and the decision is a POST, because email security scanners follow GET links.
+  - On approval the extension fills the form from the application profile, attaches the resume,
+    and takes screenshots. **The user clicks Submit.** The extension never submits applications.
+- **Accounts:** real accounts and per-user rows from the start. v1 tokens are issued by the operator
+  (`python -m backend.admin create-account`). Google sign-in (§8.6) replaces token issuance later
+  without changing the tables.
+
+Delivery is phased (§10, "v2 automation track"): A persistence and accounts, B discovery, C
+automatic match and tailor, D email approval, E assisted apply.
+
 ## 3. Architecture Overview
 
 This is the public-launch target. The private MVP implements everything except sign-in,
@@ -91,6 +136,8 @@ Files marked *planned* are placeholders for Phase 2b/4.
 AutoApplier/
 ├── DESIGN.md, README.md
 ├── Dockerfile                    # python:3.12-slim + TeX Live; uvicorn, single worker
+├── docker-compose.yml            # api + Postgres; runs migrations on start
+├── alembic.ini                   # migrations live in src/backend/migrations
 ├── requirements.txt, requirements-dev.txt, .env.example
 ├── .github/workflows/main.yml    # backend tests w/ pdflatex, extension checks + zip, image smoke test
 ├── prompts/
@@ -111,11 +158,16 @@ AutoApplier/
 │       ├── page_fit.py           # recompiles with tighter layout until one page
 │       ├── compile_adapter.py    # temp-dir adapter around src/compiler.py
 │       ├── jobs.py               # in-memory request store + worker pool + idempotency
-│       ├── security.py           # shared dev key + in-process per-IP limiter
+│       ├── security.py           # account-token auth + in-process per-account limiter
+│       ├── accounts.py           # tokens, encrypted profile read/update
+│       ├── models.py, db.py      # SQLAlchemy models + engine/sessions
+│       ├── migrations/           # Alembic (alembic.ini at repo root)
+│       ├── crypto.py             # AES-GCM encryption at rest
+│       ├── admin.py              # operator CLI: gen-key, create-account, rotate-token
+│       ├── pipeline.py           # tailor/parse, shared by API and worker
 │       ├── auth.py               # planned: Google sign-in, sessions, logout
 │       ├── credits.py            # planned: free grants, reservations, settlement, ledger
-│       ├── billing.py            # planned: checkout, signed webhooks, reconciliation
-│       └── db.py                 # planned: transactional persistence + migrations
+│       └── billing.py            # planned: checkout, signed webhooks, reconciliation
 ├── tests/                        # pytest (API, matcher, guard, LLM errors, real compile) + node
 └── extension/                    # Chromium MV3 extension (Chrome/Edge/Brave)
     ├── manifest.json             # activeTab + scripting, downloads, storage; localhost backend
@@ -260,16 +312,21 @@ content, and manually submits it through the job board's own application flow.
 
 ## 6. Data Storage & Privacy
 
-- **Master CV:** uploaded by the user and saved as serializable content in
-  `chrome.storage.local`, then reused across requests. CV text is sent to the backend per-request
-  and never persisted server-side. Local storage provides more capacity than sync storage and
+- **Master CV:** uploaded by the user and saved in `chrome.storage.local`. **Since v2 the parsed
+  CV (`master_cv`) is also stored server-side**, because the discovery worker has to tailor
+  while the user's browser is closed. It is encrypted at rest with AES-256-GCM
+  (`src/backend/crypto.py`). The key, `AUTOAPPLIER_DATA_KEY`, lives only in the server
+  environment, and each ciphertext is bound to its account and field. The notification email
+  and application profile are stored the same way. The raw CV text is not stored server-side.
+  Before v2, the CV was sent per request and never persisted. Local storage provides more capacity than sync storage and
   keeps the CV on that browser profile rather than syncing it across machines. Supported upload
   formats and text extraction are still to be defined; the parse route accepts `resume_text`,
   so a stored upload must supply text. The parsed sections (`masterCv`) are stored next to
   the text and are what each tailoring request sends.
 - **Criteria:** stored in `chrome.storage.sync`, so a user's thresholds follow them across
-  machines when Chrome Sync is enabled (§8.1). Service sign-in is separate from browser sync;
-  the backend does not need to store criteria to maintain account/credit records.
+  machines when Chrome Sync is enabled (§8.1). Since v2 the extension also saves them to the
+  backend profile, as plain JSON (they are thresholds, not personal data), so the worker can
+  match postings.
 - **Job postings / document results:** processed in memory and temporary compilation files;
   not retained as permanent server-side history. A downloaded PDF remains on the user's device.
   Delivery recovery after a lost response is an explicit pre-launch decision (§8.7).
@@ -353,8 +410,10 @@ subject to CORS at all — only content-script fetches are. So all network calls
 allowlist is still set to the extension's origin (with a pinned `"key"` in the manifest so that
 origin is stable across unpacked loads) as defense in depth, but it is not what protects anything.
 
-The existing `X-AutoApplier-Key` check and in-process IP limiter support private development.
-An extension-distributed key is extractable and cannot identify who owns credits. Before public
+`X-AutoApplier-Key` now carries a per-account token issued by the operator. Only its SHA-256
+is stored, and it resolves to an account on every request (`security.make_account_dependency`).
+Requests, results and idempotency keys are scoped to that account, and the in-process limiter
+counts per account. This replaced the original shared key. Before public
 launch, require a valid backend user session on every generation and checkout request, and derive
 the account from that session rather than a caller-supplied account ID or balance.
 
@@ -563,6 +622,25 @@ Target workflow:
    below. Passing pipeline unit tests alone is not that gate.
 
 ## 10. Roadmap
+
+### v2 automation track (§2.1)
+
+- [x] **A. Persistence and accounts** (2026-11-22).
+  - Postgres via `docker-compose.yml`, SQLAlchemy models and Alembic migrations (CI checks that
+    the models match the migrations).
+  - Operator-issued account tokens, `GET /api/me`, and `GET/PATCH /api/profile` with AES-GCM
+    encryption for CV, email and application profile.
+  - Extension settings sync to the profile, and a notification email setting.
+  - `pipeline.tailor` is shared by the API and the coming worker.
+- [ ] **B. Discovery:** Greenhouse/Lever/Ashby/Simplify adapters, baseline-first polling with
+  ETags and per-host politeness, posting dedupe, description enrichment (Python port of
+  `jsonld.js`), and the watchlist UI.
+- [ ] **C. Automatic match and tailor:** a Postgres task queue (`FOR UPDATE SKIP LOCKED`),
+  per-account criteria gate, daily LLM cap, stored results, and a popup inbox.
+- [ ] **D. Email approval:** SMTP mailer, one email per match with the PDF, single-use expiring
+  tokens, and a GET confirm page with the decision as a POST.
+- [ ] **E. Assisted apply:** ATS form fillers in the extension, application profile UI, resume
+  upload, screenshots, and submission detection. The user clicks Submit.
 
 Statuses below reflect the repository on 2026-11-17. **The private MVP (the API half of Phase 2
 and Phase 3 without accounts) is complete. Next are the Phase 2 account/credit items.**

@@ -2,6 +2,7 @@
     Pydantic request/response models for the AutoApplier API.
 """
 
+from datetime import datetime
 from typing import Literal, Optional, Union
 
 from pydantic import BaseModel, Field
@@ -177,3 +178,50 @@ class RequestStatus(BaseModel):
     status: Literal["running", "done", "error"]
     result: Optional[Union[TailorResult, CVParseResult]] = None
     error: Optional[str] = None
+
+
+# ---------- accounts and profile ----------
+
+class ApplicationProfile(BaseModel):
+    """Answers the extension uses to fill application forms (Phase E). All optional."""
+    first_name: str = Field("", max_length=_SHORT)
+    last_name: str = Field("", max_length=_SHORT)
+    preferred_name: str = Field("", max_length=_SHORT)
+    email: str = Field("", max_length=_SHORT)
+    phone: str = Field("", max_length=_SHORT)
+    city: str = Field("", max_length=_SHORT)
+    state: str = Field("", max_length=_SHORT)
+    country: str = Field("", max_length=_SHORT)
+    linkedin_url: str = Field("", max_length=_SHORT)
+    github_url: str = Field("", max_length=_SHORT)
+    website_url: str = Field("", max_length=_SHORT)
+    authorized_to_work_us: Optional[bool] = None
+    needs_sponsorship: Optional[bool] = None
+    willing_to_relocate: Optional[bool] = None
+    earliest_start_date: str = Field("", max_length=_SHORT)
+    # Voluntary demographic (EEO) questions are answered "decline to self-identify" when true.
+    decline_demographic_questions: bool = True
+
+
+class AccountOut(BaseModel):
+    id: int
+    label: str
+    daily_llm_cap: int
+    automation_enabled: bool
+
+
+class ProfileUpdate(BaseModel):
+    """PATCH /api/profile body. Omitted fields are unchanged; null clears a field."""
+    notify_email: Optional[str] = Field(None, max_length=_SHORT,
+                                        pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    master_cv: Optional[MasterCV] = None
+    criteria: Optional[Criteria] = None
+    application_profile: Optional[ApplicationProfile] = None
+
+
+class ProfileOut(BaseModel):
+    notify_email: Optional[str] = None
+    master_cv: Optional[MasterCV] = None
+    criteria: Optional[Criteria] = None
+    application_profile: Optional[ApplicationProfile] = None
+    updated_at: Optional[datetime] = None

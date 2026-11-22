@@ -1,11 +1,10 @@
 """
-    main.py - FastAPI proxy backend for the AutoApplier extension.
+    main.py - FastAPI backend for the AutoApplier extension.
 
     Run from the repository root:
         PYTHONPATH=src uvicorn backend.main:app --port 2005 --workers 1
 """
 
-import base64
 import hashlib
 import logging
 import os
@@ -13,108 +12,45 @@ import shutil
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import latex_guard, llm_engine, page_fit, render, resume_model
+from . import accounts, crypto, pipeline
 from .config import Settings, load_default_criteria
 from .criteria_matcher import eval_job_criteria
+from .db import Database
 from .jobs import IdempotencyConflict, JobStore
-from .schemas import CVParseRequest, CVParseResult, RequestStatus, TailorRequest, TailorResult
-from .security import RateLimiter, client_ip, make_api_key_dependency
+from .schemas import (
+    AccountOut, CVParseRequest, ProfileOut, ProfileUpdate, RequestStatus, TailorRequest,
+    TailorResult,
+)
+from .security import RateLimiter, make_account_dependency
 
 log = logging.getLogger("autoapplier")
-
-
-def run_pipeline(req: TailorRequest, settings: Settings) -> TailorResult:
-    """LLM selection → selection check → render → LaTeX check → compile. Criteria already passed."""
-    master_cv = resume_model.assign_ids(req.master_cv)
-    try:
-        llm = llm_engine.generate(req.job, master_cv, settings.openai_model)
-    except llm_engine.LLMError:
-        raise
-    except Exception:
-        log.exception("Unexpected error during LLM generation")
-        raise RuntimeError("Unexpected server error during generation.")
-
-    if not llm.is_qualified:
-        return TailorResult(
-            stage="llm", is_qualified=False,
-            reason="The model judged the CV not qualified for this posting.",
-            gap_analysis=llm.gap_analysis,
-        )
-
-    sections, notes = resume_model.check_selection(master_cv, llm)
-    if not any(s.kind != "education" for s in sections):
-        raise llm_engine.LLMError("The model selected no usable CV content for this resume.")
-    latex = render.render_resume(master_cv.contact, sections)
-
-    # The renderer escapes all CV text, so this is a backstop rather than the main defense.
-    problems = latex_guard.check_latex(latex)
-    if problems:
-        return TailorResult(
-            stage="compile", is_qualified=True,
-            reason="The rendered LaTeX failed validation and was not compiled.",
-            gap_analysis=llm.gap_analysis, latex_source=latex,
-            compile_log="\n".join(problems), selection_notes=notes,
-        )
-
-    fit = page_fit.compile_one_page(latex, timeout=settings.compile_timeout_seconds)
-    if fit["pdf"] is None:
-        return TailorResult(
-            stage="compile", is_qualified=True,
-            reason="pdflatex could not compile the generated resume. Fix the LaTeX source by hand.",
-            gap_analysis=llm.gap_analysis, latex_source=latex, compile_log=fit["log"],
-            selection_notes=notes,
-        )
-
-    pages = fit["pages"] or 0
-    if pages > 1:
-        reason = (f"Resume generated, but it is {pages} pages even with the tightest layout. "
-                  "Trim it by hand in the .tex.")
-    elif fit["adjustment"]:
-        reason = f"Resume generated. Layout tightened to fit one page ({fit['adjustment']})."
-    else:
-        reason = "Resume generated."
-
-    return TailorResult(
-        stage="complete", is_qualified=True, reason=reason,
-        gap_analysis=llm.gap_analysis, latex_source=fit["latex"], page_count=pages,
-        resume_pdf_base64=base64.b64encode(fit["pdf"]).decode("ascii"), selection_notes=notes,
-    )
-
-
-def run_parse(req: CVParseRequest, settings: Settings) -> CVParseResult:
-    try:
-        master_cv = llm_engine.parse_cv(req.resume_text, settings.openai_model)
-    except llm_engine.LLMError:
-        raise
-    except Exception:
-        log.exception("Unexpected error during CV parsing")
-        raise RuntimeError("Unexpected server error while parsing the CV.")
-    return CVParseResult(master_cv=master_cv,
-                         unmatched_bullets=resume_model.unmatched_bullets(master_cv, req.resume_text))
 
 
 def _fingerprint(req):
     return hashlib.sha256(req.model_dump_json().encode("utf-8")).hexdigest()
 
 
-def create_app(settings: Optional[Settings] = None) -> FastAPI:
+def create_app(settings: Optional[Settings] = None, database: Optional[Database] = None) -> FastAPI:
     settings = settings or Settings()
+    database = database or Database(settings.database_url)
     store = JobStore(settings.worker_count, settings.job_ttl_seconds)
     limiter = RateLimiter(settings.rate_limit_per_minute)
-    require_api_key = make_api_key_dependency(lambda: settings)
+    require_account = make_account_dependency(database)
 
     @asynccontextmanager
     async def lifespan(_app):
-        if not settings.api_key:
-            log.warning("AUTOAPPLIER_API_KEY is not set; all /api requests will be refused.")
+        if not database.configured:
+            log.warning("AUTOAPPLIER_DATABASE_URL is not set; all /api requests will be refused.")
         yield
         store.shutdown()
+        database.dispose()
 
-    app = FastAPI(title="AutoApplier API", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="AutoApplier API", version="0.2.0", lifespan=lifespan)
     app.state.settings = settings
+    app.state.database = database
     app.state.store = store
     app.state.limiter = limiter
 
@@ -122,26 +58,66 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=r"^chrome-extension://[a-p]{32}$",
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PATCH"],
         allow_headers=["Content-Type", "X-AutoApplier-Key", "Idempotency-Key"],
     )
+
+    def data_key():
+        try:
+            return crypto.load_key(settings.data_key)
+        except crypto.DataKeyError as e:
+            raise HTTPException(503, str(e))
+
+    def submit(account, fn, idempotency_key, fingerprint):
+        try:
+            request_id, _ = store.submit(fn, idempotency_key=idempotency_key,
+                                         fingerprint=fingerprint, owner=account.id)
+        except IdempotencyConflict:
+            raise HTTPException(409, "Idempotency-Key was already used with different input.")
+        return store.get(request_id, owner=account.id) or RequestStatus(request_id=request_id,
+                                                                         status="running")
 
     @app.get("/health")
     def health():
         return {
             "ok": True,
             "pdflatex_available": shutil.which("pdflatex") is not None,
-            "api_key_configured": bool(settings.api_key),
+            "database_ok": database.ping(),
+            "data_key_configured": bool(settings.data_key),
             "openai_key_configured": bool(os.environ.get("OPENAI_API_KEY")),
         }
 
+    @app.get("/api/me")
+    def me(account: accounts.AccountInfo = Depends(require_account)) -> AccountOut:
+        return AccountOut(id=account.id, label=account.label, daily_llm_cap=account.daily_llm_cap,
+                          automation_enabled=account.automation_enabled)
+
+    @app.get("/api/profile")
+    def get_profile(account: accounts.AccountInfo = Depends(require_account)) -> ProfileOut:
+        key = data_key()
+        try:
+            with database.session() as session:
+                return accounts.get_profile(session, key, account.id)
+        except crypto.DataKeyError as e:
+            raise HTTPException(500, str(e))
+
+    @app.patch("/api/profile")
+    def patch_profile(update: ProfileUpdate,
+                      account: accounts.AccountInfo = Depends(require_account)) -> ProfileOut:
+        key = data_key()
+        try:
+            with database.session() as session:
+                return accounts.update_profile(session, key, account.id, update)
+        except crypto.DataKeyError as e:
+            raise HTTPException(500, str(e))
+
     @app.post(
         "/api/tailor",
-        dependencies=[Depends(require_api_key)],
         responses={202: {"model": RequestStatus}, 200: {"model": RequestStatus}},
     )
     def tailor(
-        req: TailorRequest, request: Request, response: Response,
+        req: TailorRequest, response: Response,
+        account: accounts.AccountInfo = Depends(require_account),
         idempotency_key: Optional[str] = Header(default=None, max_length=200),
     ) -> RequestStatus:
         criteria = req.criteria.model_dump() if req.criteria else load_default_criteria()
@@ -153,44 +129,34 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 result=TailorResult(stage="criteria", is_qualified=False, reason=reason),
             )
 
-        if not limiter.allow(client_ip(request)):
+        if not limiter.allow(account.id):
             raise HTTPException(429, "Too many generation requests; try again in a minute.")
 
-        try:
-            request_id, _ = store.submit(
-                lambda: run_pipeline(req, settings),
-                idempotency_key=idempotency_key, fingerprint=_fingerprint(req),
-            )
-        except IdempotencyConflict:
-            raise HTTPException(409, "Idempotency-Key was already used with different input.")
-
+        status = submit(account, lambda: pipeline.tailor(req.job, req.master_cv, settings),
+                        idempotency_key, _fingerprint(req))
         response.status_code = 202
-        return store.get(request_id) or RequestStatus(request_id=request_id, status="running")
+        return status
 
     @app.post(
         "/api/cv/parse",
-        dependencies=[Depends(require_api_key)],
         responses={202: {"model": RequestStatus}, 200: {"model": RequestStatus}},
     )
     def parse_cv(
-        req: CVParseRequest, request: Request, response: Response,
+        req: CVParseRequest, response: Response,
+        account: accounts.AccountInfo = Depends(require_account),
         idempotency_key: Optional[str] = Header(default=None, max_length=200),
     ) -> RequestStatus:
-        if not limiter.allow(client_ip(request)):
+        if not limiter.allow(account.id):
             raise HTTPException(429, "Too many generation requests; try again in a minute.")
-        try:
-            request_id, _ = store.submit(
-                lambda: run_parse(req, settings),
-                idempotency_key=idempotency_key, fingerprint="parse:" + _fingerprint(req),
-            )
-        except IdempotencyConflict:
-            raise HTTPException(409, "Idempotency-Key was already used with different input.")
+        status = submit(account, lambda: pipeline.parse(req.resume_text, settings),
+                        idempotency_key, "parse:" + _fingerprint(req))
         response.status_code = 202
-        return store.get(request_id) or RequestStatus(request_id=request_id, status="running")
+        return status
 
-    @app.get("/api/requests/{request_id}", dependencies=[Depends(require_api_key)])
-    def get_request(request_id: str) -> RequestStatus:
-        status = store.get(request_id)
+    @app.get("/api/requests/{request_id}")
+    def get_request(request_id: str,
+                    account: accounts.AccountInfo = Depends(require_account)) -> RequestStatus:
+        status = store.get(request_id, owner=account.id)
         if status is None:
             raise HTTPException(404, "Unknown or expired request.")
         return status

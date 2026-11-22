@@ -35,7 +35,7 @@ async function checkSetup() {
   const missing = [];
   if (!resumeText || !resumeText.trim()) missing.push("your master CV");
   else if (!masterCv) missing.push("your CV's sections (save your CV again)");
-  if (!apiKey) missing.push("the backend API key");
+  if (!apiKey) missing.push("your account token");
   $("setup-banner").hidden = missing.length === 0;
   $("setup-text").textContent = missing.length ? `Add ${missing.join(" and ")} in settings before tailoring.` : "";
   return missing.length === 0;

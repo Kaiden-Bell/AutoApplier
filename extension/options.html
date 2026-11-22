@@ -29,7 +29,7 @@
     <h2>1. Backend connection</h2>
     <label for="backend-url">Backend URL <span class="hint">— default http://localhost:2005</span></label>
     <input id="backend-url" type="url" placeholder="http://localhost:2005">
-    <label for="api-key">API key <span class="hint">— the AUTOAPPLIER_API_KEY value from the backend's .env</span></label>
+    <label for="api-key">Account token <span class="hint">— printed by <code>python -m backend.admin create-account</code> (starts with aa_)</span></label>
     <input id="api-key" type="password" autocomplete="off">
     <p></p>
     <div class="row">
@@ -70,7 +70,19 @@
   </section>
 
   <section>
-    <h2>3. Job criteria</h2>
+    <h2>3. Notifications</h2>
+    <p class="muted">Where AutoApplier emails jobs it finds for you to approve or skip. Stored on the backend, encrypted.</p>
+    <label for="notify-email">Email address</label>
+    <input id="notify-email" type="email" autocomplete="email" placeholder="you@example.com">
+    <p></p>
+    <div class="row">
+      <button id="save-notify" class="primary">Save email</button>
+      <span id="notify-status" class="status"></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>4. Job criteria</h2>
     <p class="muted">Checked before the LLM runs. Jobs that fail are skipped at no cost. Leave a field empty to not filter on it.</p>
     <label for="target-tokens">Target title words <span class="hint">— the title must contain at least one (comma-separated)</span></label>
     <textarea id="target-tokens" rows="3"></textarea>

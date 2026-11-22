@@ -1,4 +1,6 @@
 // Settings page: backend connection + CV in storage.local, criteria in storage.sync.
+// The CV sections, criteria and notification email are also saved to the backend profile, which
+// the discovery worker uses while this browser is closed.
 
 const $ = (id) => document.getElementById(id);
 const DEFAULT_BACKEND_URL = "http://localhost:2005";
@@ -64,10 +66,12 @@ async function testConnection() {
   const h = res.value;
   const problems = [];
   if (!h.pdflatex_available) problems.push("pdflatex is not installed on the server");
-  if (!h.api_key_configured) problems.push("the server has no AUTOAPPLIER_API_KEY");
+  if (!h.database_ok) problems.push("the server can't reach its database");
+  if (!h.data_key_configured) problems.push("the server has no AUTOAPPLIER_DATA_KEY");
   if (!h.openai_key_configured) problems.push("the server has no OPENAI_API_KEY");
+  if (!h.account) problems.push(`the account token was not accepted (${h.accountError})`);
   if (problems.length) setStatus("connection-status", "err", `Reachable, but ${problems.join("; ")}.`);
-  else setStatus("connection-status", "ok", "Connected. The backend is ready.");
+  else setStatus("connection-status", "ok", `Connected as account “${h.account.label || h.account.id}”. The backend is ready.`);
 }
 
 // ---------- resume ----------
@@ -133,7 +137,8 @@ async function parseResume(text, hash) {
     const { master_cv: cv, unmatched_bullets: unmatched } = res.value;
     await chrome.storage.local.set({ masterCv: cv, masterCvHash: hash, masterCvUnmatched: unmatched || [] });
     renderSections(cv, unmatched || []);
-    setStatus("resume-status", "ok", "CV saved and read. Check its sections below.");
+    const synced = await syncProfile({ master_cv: cv }, "resume-status");
+    if (synced) setStatus("resume-status", "ok", "CV saved and read. Check its sections below.");
   } catch (e) {
     setStatus("resume-status", "err", `CV saved, but reading its sections failed: ${e.message}`);
   } finally {
@@ -198,7 +203,48 @@ async function saveSections() {
     return;
   }
   await chrome.storage.local.set({ masterCv: editedCv });
-  setStatus("sections-status", "ok", "Sections saved.");
+  if (await syncProfile({ master_cv: editedCv }, "sections-status")) {
+    setStatus("sections-status", "ok", "Sections saved.");
+  }
+}
+
+// ---------- backend profile ----------
+
+// Saves part of the profile on the backend. Returns true on success; on failure the setting is
+// still saved in this browser, and the status line says so.
+async function syncProfile(patch, statusId) {
+  const res = await chrome.runtime.sendMessage({ type: "syncProfile", patch });
+  if (res && res.ok) return true;
+  setStatus(statusId, "err", `Saved in this browser, but not on the backend: ${(res && res.error) || "no response"}. Automatic job discovery uses the backend copy.`);
+  return false;
+}
+
+async function saveNotifyEmail() {
+  const email = $("notify-email").value.trim();
+  if (email && !$("notify-email").checkValidity()) {
+    setStatus("notify-status", "err", "That doesn't look like an email address.");
+    return;
+  }
+  if (await syncProfile({ notify_email: email || null }, "notify-status")) {
+    setStatus("notify-status", "ok", email ? "Email saved." : "Email removed.");
+  }
+}
+
+// Loads the backend profile, and uploads local settings the backend doesn't have yet (for
+// installs that saved a CV before profiles existed).
+async function loadProfile(local, criteria) {
+  if (!local.apiKey) return;
+  const res = await chrome.runtime.sendMessage({ type: "getProfile" });
+  if (!res || !res.ok) {
+    setStatus("notify-status", "err", `Couldn't load your backend profile: ${(res && res.error) || "no response"}`);
+    return;
+  }
+  const profile = res.value;
+  $("notify-email").value = profile.notify_email || "";
+  const missing = {};
+  if (!profile.master_cv && local.masterCv) missing.master_cv = local.masterCv;
+  if (!profile.criteria && criteria) missing.criteria = criteria;
+  if (Object.keys(missing).length) await syncProfile(missing, "notify-status");
 }
 
 // ---------- criteria ----------
@@ -224,8 +270,9 @@ function readCriteria() {
 
 async function saveCriteria() {
   try {
-    await chrome.storage.sync.set({ criteria: readCriteria() });
-    setStatus("criteria-status", "ok", "Criteria saved.");
+    const criteria = readCriteria();
+    await chrome.storage.sync.set({ criteria });
+    if (await syncProfile({ criteria }, "criteria-status")) setStatus("criteria-status", "ok", "Criteria saved.");
   } catch (e) {
     setStatus("criteria-status", "err", e.message);
   }
@@ -235,7 +282,7 @@ async function resetCriteria() {
   const defaults = await defaultCriteria();
   fillCriteria(defaults);
   await chrome.storage.sync.remove("criteria");
-  setStatus("criteria-status", "ok", "Reset to defaults.");
+  if (await syncProfile({ criteria: defaults }, "criteria-status")) setStatus("criteria-status", "ok", "Reset to defaults.");
 }
 
 // ---------- init ----------
@@ -250,6 +297,7 @@ async function init() {
   updateResumeCount();
   renderSections(local.masterCv || null, local.masterCvUnmatched || []);
   fillCriteria(criteria || (await defaultCriteria()));
+  loadProfile(local, criteria);
 
   $("save-connection").addEventListener("click", saveConnection);
   $("test-connection").addEventListener("click", testConnection);
@@ -259,6 +307,7 @@ async function init() {
   $("save-sections").addEventListener("click", saveSections);
   $("reparse").addEventListener("click", reparse);
   $("save-criteria").addEventListener("click", saveCriteria);
+  $("save-notify").addEventListener("click", saveNotifyEmail);
   $("reset-criteria").addEventListener("click", resetCriteria);
 }
 

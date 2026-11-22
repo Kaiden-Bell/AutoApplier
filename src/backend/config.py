@@ -23,8 +23,11 @@ def _int_env(name, default):
 
 @dataclass
 class Settings:
-    # Shared development key. Unset means every protected request is refused (fail closed).
-    api_key: str = field(default_factory=lambda: os.environ.get("AUTOAPPLIER_API_KEY", ""))
+    # SQLAlchemy URL, e.g. postgresql+psycopg://user:pass@db:5432/autoapplier. Unset means every
+    # account-bound request is refused (fail closed).
+    database_url: str = field(default_factory=lambda: os.environ.get("AUTOAPPLIER_DATABASE_URL", ""))
+    # Base64url 32-byte key for encrypting profile data at rest (python -m backend.admin gen-key).
+    data_key: str = field(default_factory=lambda: os.environ.get("AUTOAPPLIER_DATA_KEY", ""))
     openai_model: str = field(default_factory=lambda: os.environ.get("OPENAI_MODEL", "gpt-5.4-mini"))
     rate_limit_per_minute: int = field(default_factory=lambda: _int_env("AUTOAPPLIER_RATE_LIMIT", 10))
     job_ttl_seconds: int = field(default_factory=lambda: _int_env("AUTOAPPLIER_JOB_TTL", 15 * 60))

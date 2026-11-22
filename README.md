@@ -12,7 +12,7 @@ AutoApplier is a Chrome extension plus a small FastAPI backend. It tailors your 
 
 The OpenAI key lives only on the backend. See [DESIGN.md](./DESIGN.md) for the architecture, security decisions and roadmap.
 
-> **Status: private MVP.** Access uses one shared API key. Google sign-in, per-account credits and paid credit packs are designed but not built yet (DESIGN.md §10). Don't expose this backend publicly with your OpenAI key behind it.
+> **Status: private, v2 in progress.** Each user has an account with an operator-issued token, and profiles are stored encrypted in Postgres. Automatic job discovery, email approval and assisted applying are being built in phases (DESIGN.md §10). Google sign-in and paid credits come later. Don't expose this backend publicly with your OpenAI key behind it.
 
 ## Quick start
 
@@ -21,21 +21,24 @@ You need Docker, Chrome (or Edge or Brave), and an OpenAI API key.
 ### 1. Start the backend
 
 ```bash
-cp .env.example .env          # then set OPENAI_API_KEY and pick an AUTOAPPLIER_API_KEY
-docker build -t autoapplier .
-docker run --rm -p 127.0.0.1:2005:2005 --env-file .env autoapplier
+cp .env.example .env          # set OPENAI_API_KEY and POSTGRES_PASSWORD
+docker compose run --rm api python -m backend.admin gen-key   # paste into AUTOAPPLIER_DATA_KEY
+docker compose up -d --build  # starts Postgres, runs migrations, starts the API
+docker compose run --rm api python -m backend.admin create-account --label me
 ```
 
-Check it with `curl localhost:2005/health`. All four values should be `true`. Binding to `127.0.0.1` keeps the API off your network.
+The last command prints your account token (`aa_…`). It's shown once; `rotate-token <id>` issues a new one. Check the backend with `curl localhost:2005/health`. Every value should be `true`. The API binds to `127.0.0.1`, so it stays off your network.
+
+Keep `AUTOAPPLIER_DATA_KEY` safe. Stored CVs and profiles can't be decrypted without it.
 
 ### 2. Load the extension
 
 1. Open `chrome://extensions` and turn on **Developer mode**.
 2. Click **Load unpacked** and select the `extension/` folder. A welcome page opens.
 3. In the extension's **Settings**:
-   - Paste your `AUTOAPPLIER_API_KEY` and click **Test connection**.
+   - Paste your account token and click **Test connection**.
    - Paste your master CV, or load a `.txt`, `.tex` or `.md` file, and click **Save CV**. Check the sections it finds and fix any wrong type, for example a job marked as a project.
-   - Adjust your criteria.
+   - Add the email address for job notifications, and adjust your criteria. Your CV sections, criteria and email are also saved to your backend profile, where automatic discovery will use them.
 
 ### 3. Use it
 
@@ -55,9 +58,11 @@ Backend environment variables (see `.env.example`):
 | Variable | Default | Purpose |
 |---|---|---|
 | `OPENAI_API_KEY` | (required) | Model access. Kept server-side only. |
-| `AUTOAPPLIER_API_KEY` | (required) | Shared key the extension sends as `X-AutoApplier-Key`. If unset, every request is refused. |
+| `POSTGRES_PASSWORD` | (required with Compose) | Password for the Compose Postgres service. |
+| `AUTOAPPLIER_DATABASE_URL` | set by Compose | SQLAlchemy URL. If unset, every `/api` request is refused. |
+| `AUTOAPPLIER_DATA_KEY` | (required) | 32-byte base64url key that encrypts stored profiles (AES-GCM). Generate with `python -m backend.admin gen-key`. |
 | `OPENAI_MODEL` | `gpt-5.4-mini` | Model used for qualification and drafting. |
-| `AUTOAPPLIER_RATE_LIMIT` | `10` | Generations per minute per client IP. Criteria rejections don't count. |
+| `AUTOAPPLIER_RATE_LIMIT` | `10` | Generations per minute per account. Criteria rejections don't count. |
 | `AUTOAPPLIER_JOB_TTL` | `900` | Seconds a finished result stays available for polling and re-download. |
 | `AUTOAPPLIER_WORKERS` | `2` | Concurrent generations. |
 | `AUTOAPPLIER_COMPILE_TIMEOUT` | `30` | Hard `pdflatex` time limit in seconds. |
@@ -71,9 +76,11 @@ Criteria fields (set in the extension; defaults in `src/backend/criteria.json`):
 
 ## API
 
-All `/api` routes require the `X-AutoApplier-Key` header.
+All `/api` routes require an account token in the `X-AutoApplier-Key` header. Requests, results and idempotency keys are private to the account.
 
-- `GET /health` reports `{ok, pdflatex_available, api_key_configured, openai_key_configured}`.
+- `GET /health` reports `{ok, pdflatex_available, database_ok, data_key_configured, openai_key_configured}`.
+- `GET /api/me` returns `{id, label, daily_llm_cap, automation_enabled}`.
+- `GET /api/profile` returns `{notify_email, master_cv, criteria, application_profile, updated_at}`. `PATCH /api/profile` updates the fields present in the body; `null` clears one. The email, CV and application profile are encrypted at rest.
 - `POST /api/cv/parse` takes `{resume_text}` and returns `202 {request_id}`. The finished result is `{master_cv, unmatched_bullets}`. `master_cv` is `{contact, sections: [{id, heading, kind, entries: [{id, title, organization, dates, location, tech, bullets: [{id, text}]}]}]}`. `unmatched_bullets` lists parsed lines that don't appear word for word in the text.
 - `POST /api/tailor` takes `{job: {title, location, pay, description, url?}, master_cv, criteria?}`, plus an optional `Idempotency-Key` header. IDs in `master_cv` are reassigned from position on the server.
   - A criteria rejection returns `200` with the finished result immediately.
@@ -86,7 +93,7 @@ Generation is queued and polled because Chrome stops an extension service worker
 Example using the sample files (parse first, then tailor with the parse):
 
 ```bash
-H="X-AutoApplier-Key: $AUTOAPPLIER_API_KEY"
+H="X-AutoApplier-Key: $AUTOAPPLIER_TOKEN"   # your aa_… account token
 python3 -c 'import json; print(json.dumps({"resume_text": open("tests/test_text_files/master_cv.txt").read()}))' > /tmp/cv.json
 curl -s -X POST localhost:2005/api/cv/parse -H "$H" -H 'Content-Type: application/json' -d @/tmp/cv.json
 curl -s localhost:2005/api/requests/<request_id> -H "$H" > /tmp/parse.json   # poll until "done"
@@ -98,10 +105,8 @@ print(json.dumps({
           "description": open("tests/test_text_files/job_description.txt").read()},
   "master_cv": json.load(open("/tmp/parse.json"))["result"]["master_cv"]}))
 EOF
-curl -s -X POST localhost:2005/api/tailor -H "X-AutoApplier-Key: $AUTOAPPLIER_API_KEY" \
-     -H 'Content-Type: application/json' -d @/tmp/req.json
-# then poll:
-curl -s localhost:2005/api/requests/<request_id> -H "X-AutoApplier-Key: $AUTOAPPLIER_API_KEY"
+curl -s -X POST localhost:2005/api/tailor -H "$H" -H 'Content-Type: application/json' -d @/tmp/req.json
+curl -s localhost:2005/api/requests/<request_id> -H "$H"                      # poll
 ```
 
 ## Development
@@ -109,8 +114,10 @@ curl -s localhost:2005/api/requests/<request_id> -H "X-AutoApplier-Key: $AUTOAPP
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
-PYTHONPATH=src python -m pytest tests          # compile tests skip without pdflatex
+PYTHONPATH=src python -m pytest tests          # in-memory SQLite; compile tests skip without pdflatex
+# against Postgres: AUTOAPPLIER_TEST_DATABASE_URL=postgresql+psycopg://user:pw@host/db python -m pytest tests
 node --test tests/*.test.js                    # JSON-LD parser tests
+alembic upgrade head                           # needs AUTOAPPLIER_DATABASE_URL
 PYTHONPATH=src uvicorn backend.main:app --reload --port 2005
 ```
 
@@ -121,16 +128,21 @@ docker run --rm --user root -v "$PWD":/work:ro autoapplier sh -c \
   "pip install -q -r /work/requirements-dev.txt && cd /work && su app -s /bin/sh -c 'PYTHONPATH=/work/src python -m pytest -p no:cacheprovider tests'"
 ```
 
-CI (`.github/workflows/main.yml`) runs the backend tests with TeX Live installed and fails if any are skipped. It also syntax-checks and tests the extension, uploads a zipped extension artifact, and smoke-tests the Docker image.
+CI (`.github/workflows/main.yml`) runs the backend tests against Postgres with TeX Live installed, and fails if any are skipped. It also syntax-checks and tests the extension, uploads a zipped extension artifact, and smoke-tests the Compose stack: migrations, account creation and token auth.
+
+Schema changes need an Alembic revision (`alembic revision --autogenerate -m "..."` with `AUTOAPPLIER_DATABASE_URL` set). `tests/test_db.py` fails if the models and migrations differ.
 
 ## Layout
 
 ```
 src/compiler.py            file-based pdflatex wrapper (shared by the API adapter)
-src/backend/               FastAPI app: main, schemas, criteria_matcher, llm_engine,
-                           resume_model (ID selection checks), render (LaTeX template),
+src/backend/               FastAPI app: main, pipeline (tailor/parse), schemas, criteria_matcher,
+                           llm_engine, resume_model (ID selection checks), render (LaTeX template),
                            latex_guard, page_fit, compile_adapter, jobs, security, config
-src/backend/{auth,credits,billing,db}.py   placeholders for planned phases
+src/backend/               accounts (tokens, profile), models + db (SQLAlchemy), crypto (AES-GCM),
+                           admin (operator CLI), migrations/ (Alembic)
+src/backend/{auth,credits,billing}.py   placeholders for planned phases
+docker-compose.yml         API + Postgres
 prompts/                   system prompts: CV parsing and resume selection
 extension/                 MV3 extension: manifest, background, popup, options, welcome,
                            jsonld.js + content_script.js (injected on click)

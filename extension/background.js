@@ -25,6 +25,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     resume: () => resumeIfNeeded(),
     download: () => downloadFromLastRun(message.kind),
     health: () => checkHealth(),
+    getProfile: () => getConfig().then((cfg) => api(cfg, "/api/profile")),
+    syncProfile: () => syncProfile(message.patch),
     clear: () => chrome.storage.session.remove("lastRun"),
   };
   const handler = handlers[message && message.type];
@@ -114,7 +116,25 @@ async function checkHealth() {
   const cfg = await getConfig();
   const res = await fetch(cfg.backendUrl + "/health", { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }).catch(() => null);
   if (!res || !res.ok) throw new Error(`Could not reach the backend at ${cfg.backendUrl}.`);
-  return res.json();
+  const health = await res.json();
+  let account = null;
+  let accountError = cfg.apiKey ? "" : "No account token is saved.";
+  if (cfg.apiKey) {
+    try {
+      account = await api(cfg, "/api/me");
+    } catch (e) {
+      accountError = e.message;
+    }
+  }
+  return { ...health, account, accountError };
+}
+
+// Saves part of the profile (CV sections, criteria, notification email) on the backend, which
+// the discovery worker reads. Omitted fields are left unchanged there.
+async function syncProfile(patch) {
+  const cfg = await getConfig();
+  if (!cfg.apiKey) throw new Error("No account token is saved.");
+  return api(cfg, "/api/profile", { method: "PATCH", body: patch });
 }
 
 // ---------- tailoring flow ----------
@@ -133,7 +153,7 @@ async function startTailor(job) {
   const cfg = await getConfig();
   if (!cfg.resumeText.trim()) throw new Error("Add your master CV in AutoApplier settings first.");
   if (!cfg.masterCv) throw new Error("Your CV's sections haven't been read yet. Open AutoApplier settings and save your CV.");
-  if (!cfg.apiKey) throw new Error("Add the backend API key in AutoApplier settings first.");
+  if (!cfg.apiKey) throw new Error("Add your account token in AutoApplier settings first.");
   if (!job || !String(job.description || "").trim()) throw new Error("The job description is empty.");
 
   if (runActive) throw new Error("A resume is already being generated. Wait for it to finish.");
@@ -257,7 +277,7 @@ let parseActive = false;
 // which waits for the result; polling keeps each fetch short, as with tailoring.
 async function parseCv(text) {
   const cfg = await getConfig();
-  if (!cfg.apiKey) throw new Error("Add the backend API key above first.");
+  if (!cfg.apiKey) throw new Error("Add your account token above first.");
   if (!String(text || "").trim()) throw new Error("The CV is empty.");
   if (parseActive) throw new Error("Your CV is already being read. Wait for it to finish.");
 
