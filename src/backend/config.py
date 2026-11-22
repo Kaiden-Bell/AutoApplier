@@ -33,6 +33,11 @@ class Settings:
     job_ttl_seconds: int = field(default_factory=lambda: _int_env("AUTOAPPLIER_JOB_TTL", 15 * 60))
     worker_count: int = field(default_factory=lambda: _int_env("AUTOAPPLIER_WORKERS", 2))
     compile_timeout_seconds: int = field(default_factory=lambda: _int_env("AUTOAPPLIER_COMPILE_TIMEOUT", 30))
+    # Discovery worker: how often each watched source is polled, and how often the worker wakes.
+    poll_interval_seconds: int = field(default_factory=lambda: _int_env("AUTOAPPLIER_POLL_INTERVAL", 15 * 60))
+    worker_tick_seconds: int = field(default_factory=lambda: _int_env("AUTOAPPLIER_WORKER_TICK", 30))
+    # Most requests per minute to any one host (all Greenhouse boards share one host, for example).
+    host_requests_per_minute: int = field(default_factory=lambda: _int_env("AUTOAPPLIER_HOST_RATE", 30))
 
 
 def load_default_criteria():

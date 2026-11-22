@@ -632,9 +632,29 @@ Target workflow:
     encryption for CV, email and application profile.
   - Extension settings sync to the profile, and a notification email setting.
   - `pipeline.tailor` is shared by the API and the coming worker.
-- [ ] **B. Discovery:** Greenhouse/Lever/Ashby/Simplify adapters, baseline-first polling with
-  ETags and per-host politeness, posting dedupe, description enrichment (Python port of
-  `jsonld.js`), and the watchlist UI.
+- [x] **B. Discovery** (2026-11-22).
+  - `src/backend/sources/`: Greenhouse, Lever, Ashby and Simplify adapters, built against
+    responses recorded on 2026-11-22. Greenhouse pay comes from `pay_transparency`.
+  - `discovery.py` + `worker.py`: due sources are claimed with `FOR UPDATE SKIP LOCKED` and a
+    lease. Polls are conditional (ETag), spaced by the interval with jitter, back off on
+    failure, and keep at least 1 s between requests to one host.
+  - The first poll is a baseline. A source rewatched after being idle re-baselines.
+  - Postings that leave the feed are closed, and reopen if they return.
+  - `dedupe_key` identifies one job across sources. It is applied per account, because accounts
+    watch different sources.
+  - `sources/enrich.py` fills Simplify descriptions from the ATS API or the page's JSON-LD
+    (a Python port of `jsonld.js`). Phase C calls it only for postings that pass criteria.
+  - Watchlist UI in Settings, and `GET/POST/DELETE /api/sources`, `GET /api/postings`.
+  - **Load at scale:** request volume grows with distinct boards, not users, because sources and
+    postings are shared and accounts read them from the database. On top of that:
+    - a per-host request budget (`AUTOAPPLIER_HOST_RATE`);
+    - a `429`/`503` with `Retry-After` pauses the whole host, and boards on it are deferred
+      without counting as failures;
+    - boards unchanged for 2 or 7 days are checked 2× or 4× less often.
+  - **Managed Postgres:** server-side prepared statements are off, so transaction poolers
+    (Supabase, PgBouncer) work. The API and worker still need an always-on host for `pdflatex`
+    and the polling loop. Per-user decisions (shown, approved, skipped, applied) belong in Phase C's
+    `matches` and never trigger board fetches.
 - [ ] **C. Automatic match and tailor:** a Postgres task queue (`FOR UPDATE SKIP LOCKED`),
   per-account criteria gate, daily LLM cap, stored results, and a popup inbox.
 - [ ] **D. Email approval:** SMTP mailer, one email per match with the PDF, single-use expiring

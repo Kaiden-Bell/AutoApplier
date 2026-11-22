@@ -247,6 +247,102 @@ async function loadProfile(local, criteria) {
   if (Object.keys(missing).length) await syncProfile(missing, "notify-status");
 }
 
+// ---------- watchlist ----------
+
+const SIMPLIFY_LISTS = {
+  "add-simplify-interns": "https://github.com/SimplifyJobs/Summer2027-Internships",
+  "add-simplify-newgrad": "https://github.com/SimplifyJobs/New-Grad-Positions",
+};
+
+async function send(message) {
+  const res = await chrome.runtime.sendMessage(message);
+  if (!res || !res.ok) throw new Error((res && res.error) || "No response from the extension.");
+  return res.value;
+}
+
+function timeAgo(iso) {
+  const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 90) return "just now";
+  if (secs < 5400) return `${Math.round(secs / 60)} min ago`;
+  if (secs < 129600) return `${Math.round(secs / 3600)} h ago`;
+  return `${Math.round(secs / 86400)} days ago`;
+}
+
+function sourceStatus(s) {
+  if (s.last_error) return { text: `Last check failed: ${s.last_error}`, err: true };
+  if (!s.last_polled_at) return { text: "Waiting for its first check (jobs open now are skipped)." };
+  const parts = [`Checked ${timeAgo(s.last_polled_at)}`, `${s.open_postings} open`];
+  parts.push(`${s.new_postings_7d} new this week`);
+  return { text: parts.join(" · ") };
+}
+
+const KIND_LABELS = { greenhouse: "Greenhouse", lever: "Lever", ashby: "Ashby", simplify: "SimplifyJobs list" };
+
+async function loadWatchlist() {
+  const local = await chrome.storage.local.get("apiKey");
+  if (!local.apiKey) return;
+  try {
+    const [list, recent] = await Promise.all([send({ type: "listSources" }), send({ type: "recentPostings", limit: 15 })]);
+    renderSources(list);
+    renderPostings(recent);
+  } catch (e) {
+    setStatus("sources-status", "err", `Couldn't load your watchlist: ${e.message}`);
+  }
+}
+
+function renderSources(list) {
+  $("sources-list").replaceChildren(...list.map((s) => {
+    const status = sourceStatus(s);
+    const remove = el("button", { textContent: "Remove" });
+    remove.addEventListener("click", async () => {
+      remove.disabled = true;
+      try {
+        await send({ type: "removeSource", id: s.id });
+        await loadWatchlist();
+      } catch (e) {
+        remove.disabled = false;
+        setStatus("sources-status", "err", e.message);
+      }
+    });
+    return el("div", { className: "source" }, [
+      el("div", { className: "grow" }, [
+        el("div", { className: "name", textContent: `${s.name || s.slug} — ${KIND_LABELS[s.kind] || s.kind}` }),
+        el("div", { className: `meta${status.err ? " err" : ""}`, textContent: status.text }),
+      ]),
+      remove,
+    ]);
+  }));
+}
+
+function renderPostings(postings) {
+  $("postings-empty").hidden = postings.length > 0;
+  $("postings").replaceChildren(...postings.map((p) => {
+    const label = [p.title, p.company, p.location].filter(Boolean).join(" — ");
+    const safe = /^https?:\/\//i.test(p.apply_url) ? p.apply_url : null;
+    const link = safe
+      ? el("a", { href: safe, target: "_blank", rel: "noopener noreferrer", textContent: label })
+      : el("span", { textContent: label });
+    return el("li", {}, [link, el("span", { className: "muted", textContent: ` · found ${timeAgo(p.first_seen_at)}` })]);
+  }));
+}
+
+async function addSource(url) {
+  url = (url || "").trim();
+  if (!url) {
+    setStatus("sources-status", "err", "Paste a job board URL first.");
+    return;
+  }
+  setStatus("sources-status", "", "Checking that board…");
+  try {
+    const source = await send({ type: "addSource", url });
+    $("source-url").value = "";
+    setStatus("sources-status", "ok", `Watching ${source.name || source.slug}.`);
+    await loadWatchlist();
+  } catch (e) {
+    setStatus("sources-status", "err", e.message);
+  }
+}
+
 // ---------- criteria ----------
 
 function fillCriteria(c) {
@@ -298,6 +394,7 @@ async function init() {
   renderSections(local.masterCv || null, local.masterCvUnmatched || []);
   fillCriteria(criteria || (await defaultCriteria()));
   loadProfile(local, criteria);
+  loadWatchlist();
 
   $("save-connection").addEventListener("click", saveConnection);
   $("test-connection").addEventListener("click", testConnection);
@@ -308,6 +405,9 @@ async function init() {
   $("reparse").addEventListener("click", reparse);
   $("save-criteria").addEventListener("click", saveCriteria);
   $("save-notify").addEventListener("click", saveNotifyEmail);
+  $("add-source").addEventListener("click", () => addSource($("source-url").value));
+  $("source-url").addEventListener("keydown", (e) => e.key === "Enter" && addSource($("source-url").value));
+  Object.entries(SIMPLIFY_LISTS).forEach(([id, url]) => $(id).addEventListener("click", () => addSource(url)));
   $("reset-criteria").addEventListener("click", resetCriteria);
 }
 

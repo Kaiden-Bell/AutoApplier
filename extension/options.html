@@ -18,6 +18,12 @@
     .cv-section select { padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font: inherit; }
     .cv-section ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
     #unmatched li { font-size: 12px; }
+    .source { display: flex; gap: 8px; align-items: center; border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; margin: 6px 0; background: var(--surface); }
+    .source .grow { min-width: 0; }
+    .source .name { font-weight: 600; }
+    .source .meta { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+    .source .meta.err { color: var(--err); }
+    #postings li { font-size: 13px; margin: 2px 0; }
   </style>
 </head>
 <body>
@@ -106,6 +112,25 @@
       <button id="reset-criteria">Reset to defaults</button>
       <span id="criteria-status" class="status"></span>
     </div>
+  </section>
+  <section>
+    <h2>5. Job watchlist</h2>
+    <p class="muted">The backend checks these about every 15 minutes, even while this browser is closed. Paste a company's Greenhouse, Lever or Ashby job board (for example <code>boards.greenhouse.io/acme</code> or <code>jobs.lever.co/acme</code>), or a SimplifyJobs list on GitHub. Jobs already open when you add a board are skipped; only new ones are reported.</p>
+    <label for="source-url">Board or list URL</label>
+    <div class="row">
+      <input id="source-url" class="grow" type="url" placeholder="https://jobs.ashbyhq.com/acme">
+      <button id="add-source" class="primary">Add</button>
+    </div>
+    <p></p>
+    <div class="row">
+      <button id="add-simplify-interns">Add Simplify Summer 2027 internships</button>
+      <button id="add-simplify-newgrad">Add Simplify new-grad positions</button>
+      <span id="sources-status" class="status"></span>
+    </div>
+    <div id="sources-list"></div>
+    <h2>Recently found</h2>
+    <p id="postings-empty" class="muted">New postings from your watchlist appear here.</p>
+    <ul id="postings"></ul>
   </section>
 </main>
 <script src="options.js"></script>

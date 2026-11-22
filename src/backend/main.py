@@ -15,15 +15,16 @@ from typing import Optional
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import accounts, crypto, pipeline
+from . import accounts, crypto, discovery, pipeline, sources
 from .config import Settings, load_default_criteria
 from .criteria_matcher import eval_job_criteria
 from .db import Database
 from .jobs import IdempotencyConflict, JobStore
 from .schemas import (
-    AccountOut, CVParseRequest, ProfileOut, ProfileUpdate, RequestStatus, TailorRequest,
-    TailorResult,
+    AccountOut, AddSourceRequest, CVParseRequest, PostingOut, ProfileOut, ProfileUpdate,
+    RequestStatus, SourceOut, TailorRequest, TailorResult,
 )
+from .sources.http import HttpClient
 from .security import RateLimiter, make_account_dependency
 
 log = logging.getLogger("autoapplier")
@@ -33,9 +34,12 @@ def _fingerprint(req):
     return hashlib.sha256(req.model_dump_json().encode("utf-8")).hexdigest()
 
 
-def create_app(settings: Optional[Settings] = None, database: Optional[Database] = None) -> FastAPI:
+def create_app(settings: Optional[Settings] = None, database: Optional[Database] = None,
+               http: Optional[HttpClient] = None) -> FastAPI:
     settings = settings or Settings()
     database = database or Database(settings.database_url)
+    # Used only to check that a board exists when it is added to a watchlist.
+    http = http or HttpClient(timeout=8.0, requests_per_minute=settings.host_requests_per_minute)
     store = JobStore(settings.worker_count, settings.job_ttl_seconds)
     limiter = RateLimiter(settings.rate_limit_per_minute)
     require_account = make_account_dependency(database)
@@ -46,6 +50,7 @@ def create_app(settings: Optional[Settings] = None, database: Optional[Database]
             log.warning("AUTOAPPLIER_DATABASE_URL is not set; all /api requests will be refused.")
         yield
         store.shutdown()
+        http.close()
         database.dispose()
 
     app = FastAPI(title="AutoApplier API", version="0.2.0", lifespan=lifespan)
@@ -58,7 +63,7 @@ def create_app(settings: Optional[Settings] = None, database: Optional[Database]
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=r"^chrome-extension://[a-p]{32}$",
-        allow_methods=["GET", "POST", "PATCH"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "X-AutoApplier-Key", "Idempotency-Key"],
     )
 
@@ -110,6 +115,42 @@ def create_app(settings: Optional[Settings] = None, database: Optional[Database]
                 return accounts.update_profile(session, key, account.id, update)
         except crypto.DataKeyError as e:
             raise HTTPException(500, str(e))
+
+    @app.get("/api/sources")
+    def list_sources(account: accounts.AccountInfo = Depends(require_account)) -> list[SourceOut]:
+        with database.session() as session:
+            return [SourceOut(**vars(v)) for v in discovery.list_sources(session, account.id)]
+
+    @app.post("/api/sources", status_code=201)
+    def add_source(req: AddSourceRequest,
+                   account: accounts.AccountInfo = Depends(require_account)) -> SourceOut:
+        try:
+            with database.session() as session:
+                source_id = discovery.add_source(session, http, account.id, req.url,
+                                                 settings.poll_interval_seconds)
+        except discovery.WatchlistError as e:
+            raise HTTPException(422, str(e))
+        except sources.SourceError as e:
+            raise HTTPException(502, f"Couldn't reach that job board to check it ({e}). Try again.")
+        with database.session() as session:
+            views = discovery.list_sources(session, account.id)
+        return SourceOut(**vars(next(v for v in views if v.id == source_id)))
+
+    @app.delete("/api/sources/{source_id}", status_code=204)
+    def remove_source(source_id: int,
+                      account: accounts.AccountInfo = Depends(require_account)) -> Response:
+        with database.session() as session:
+            if not discovery.remove_source(session, account.id, source_id):
+                raise HTTPException(404, "That source isn't on your watchlist.")
+        return Response(status_code=204)
+
+    @app.get("/api/postings")
+    def recent_postings(limit: int = 50,
+                        account: accounts.AccountInfo = Depends(require_account)) -> list[PostingOut]:
+        limit = max(1, min(limit, 200))
+        with database.session() as session:
+            rows = discovery.recent_postings(session, account.id, limit)
+            return [PostingOut.model_validate(r, from_attributes=True) for r in rows]
 
     @app.post(
         "/api/tailor",

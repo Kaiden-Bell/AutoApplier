@@ -15,6 +15,12 @@ def test_migrations_match_models(database):
     assert diff == [], f"models and migrations differ; add an Alembic revision: {diff}"
 
 
+def test_postgres_engine_disables_server_prepared_statements():
+    # Required behind Supabase's transaction pooler (port 6543) and PgBouncer.
+    from backend.db import postgres_engine_kwargs
+    assert postgres_engine_kwargs()["connect_args"]["prepare_threshold"] is None
+
+
 def test_downgrade_to_base_and_back(database):
     migrate(database, "head")
     from alembic import command

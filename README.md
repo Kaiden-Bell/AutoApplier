@@ -39,6 +39,7 @@ Keep `AUTOAPPLIER_DATA_KEY` safe. Stored CVs and profiles can't be decrypted wit
    - Paste your account token and click **Test connection**.
    - Paste your master CV, or load a `.txt`, `.tex` or `.md` file, and click **Save CV**. Check the sections it finds and fix any wrong type, for example a job marked as a project.
    - Add the email address for job notifications, and adjust your criteria. Your CV sections, criteria and email are also saved to your backend profile, where automatic discovery will use them.
+   - Under **Job watchlist**, add company boards (Greenhouse, Lever or Ashby URLs) or a SimplifyJobs list. The worker checks them about every 15 minutes. Jobs already open when you add a board are skipped, and new ones appear under **Recently found**. Matching, tailoring and emailing them come in the next phases.
 
 ### 3. Use it
 
@@ -50,6 +51,26 @@ Open a job posting, click the AutoApplier icon, and check the extracted fields. 
 | Model says you're not a match | The gap analysis. |
 | PDF compiled | The PDF downloads. You can also download the `.tex`. Any corrections made to the model's choices are listed. |
 | LaTeX didn't compile | The compiler log and a `.tex` download, so you can fix it by hand. The model is never asked to regenerate (DESIGN.md §8.4). |
+
+### Hosting with a managed database (Supabase)
+
+Postgres can be managed (for example Supabase). The API and worker can't run as serverless functions: they run `pdflatex` and a polling loop. Run the image on any always-on host, such as your own machine, a homelab, a small VPS, or a container platform. Point both at the managed database and leave the Compose `db` service out:
+
+```bash
+# .env on the host running the image
+AUTOAPPLIER_DATABASE_URL=postgresql+psycopg://<user>:<password>@<pooler-host>:6543/postgres?sslmode=require
+docker compose run --rm --no-deps api alembic upgrade head
+docker compose up -d api worker --no-deps
+```
+
+Use Supabase's connection-pooler URL; direct connections may be IPv6-only. Transaction mode (port 6543) works because the backend disables server-side prepared statements (`src/backend/db.py`).
+
+**How discovery load scales:**
+- Each board is fetched once per interval no matter how many accounts watch it. The postings are stored once and every account reads them from the database, so request volume grows with **distinct boards**, not users.
+- Unchanged boards answer `304 Not Modified`.
+- Boards with no changes in 2 days are checked half as often, and after 7 days a quarter as often.
+- Requests to one host are capped by `AUTOAPPLIER_HOST_RATE`.
+- A `429` pauses every board on that host until its `Retry-After` time.
 
 ## Configuration
 
@@ -66,6 +87,9 @@ Backend environment variables (see `.env.example`):
 | `AUTOAPPLIER_JOB_TTL` | `900` | Seconds a finished result stays available for polling and re-download. |
 | `AUTOAPPLIER_WORKERS` | `2` | Concurrent generations. |
 | `AUTOAPPLIER_COMPILE_TIMEOUT` | `30` | Hard `pdflatex` time limit in seconds. |
+| `AUTOAPPLIER_POLL_INTERVAL` | `900` | Seconds between checks of each watched board (±10% jitter; failures back off up to 6 h). |
+| `AUTOAPPLIER_WORKER_TICK` | `30` | Seconds between discovery-worker wake-ups. |
+| `AUTOAPPLIER_HOST_RATE` | `30` | Most requests per minute to one host. Every board on an ATS shares its host, so this caps total load on, say, Greenhouse. |
 
 Criteria fields (set in the extension; defaults in `src/backend/criteria.json`):
 
@@ -81,6 +105,8 @@ All `/api` routes require an account token in the `X-AutoApplier-Key` header. Re
 - `GET /health` reports `{ok, pdflatex_available, database_ok, data_key_configured, openai_key_configured}`.
 - `GET /api/me` returns `{id, label, daily_llm_cap, automation_enabled}`.
 - `GET /api/profile` returns `{notify_email, master_cv, criteria, application_profile, updated_at}`. `PATCH /api/profile` updates the fields present in the body; `null` clears one. The email, CV and application profile are encrypted at rest.
+- `GET /api/sources` lists the account's watchlist with status (`last_polled_at`, `last_error`, `open_postings`, `new_postings_7d`). `POST /api/sources {url}` adds a Greenhouse, Lever or Ashby board, or a SimplifyJobs list, detected from any board, job, embed or API URL. It returns `422` for unsupported URLs or unknown boards. `DELETE /api/sources/{id}` removes one.
+- `GET /api/postings?limit=` lists new postings from the watchlist, one per job even when two sources report it.
 - `POST /api/cv/parse` takes `{resume_text}` and returns `202 {request_id}`. The finished result is `{master_cv, unmatched_bullets}`. `master_cv` is `{contact, sections: [{id, heading, kind, entries: [{id, title, organization, dates, location, tech, bullets: [{id, text}]}]}]}`. `unmatched_bullets` lists parsed lines that don't appear word for word in the text.
 - `POST /api/tailor` takes `{job: {title, location, pay, description, url?}, master_cv, criteria?}`, plus an optional `Idempotency-Key` header. IDs in `master_cv` are reassigned from position on the server.
   - A criteria rejection returns `200` with the finished result immediately.
@@ -141,8 +167,10 @@ src/backend/               FastAPI app: main, pipeline (tailor/parse), schemas, 
                            latex_guard, page_fit, compile_adapter, jobs, security, config
 src/backend/               accounts (tokens, profile), models + db (SQLAlchemy), crypto (AES-GCM),
                            admin (operator CLI), migrations/ (Alembic)
+src/backend/               discovery (watchlist, polling), worker (background loop),
+                           sources/ (greenhouse, lever, ashby, simplify adapters, JSON-LD, enrich)
 src/backend/{auth,credits,billing}.py   placeholders for planned phases
-docker-compose.yml         API + Postgres
+docker-compose.yml         API + discovery worker + Postgres
 prompts/                   system prompts: CV parsing and resume selection
 extension/                 MV3 extension: manifest, background, popup, options, welcome,
                            jsonld.js + content_script.js (injected on click)

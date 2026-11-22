@@ -31,7 +31,16 @@ def make_engine(url):
             dbapi_connection.execute("PRAGMA foreign_keys=ON")
 
         return engine
-    return create_engine(url, pool_pre_ping=True)
+    return create_engine(url, **postgres_engine_kwargs())
+
+
+def postgres_engine_kwargs():
+    """
+        Engine options for Postgres. psycopg prepares statements on the server after a few
+        executions, which breaks behind a transaction-mode pooler (Supabase's port 6543,
+        PgBouncer). Turning that off costs little here and works with every pooler mode.
+    """
+    return {"pool_pre_ping": True, "connect_args": {"prepare_threshold": None}}
 
 
 class Database:

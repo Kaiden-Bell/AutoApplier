@@ -27,6 +27,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     health: () => checkHealth(),
     getProfile: () => getConfig().then((cfg) => api(cfg, "/api/profile")),
     syncProfile: () => syncProfile(message.patch),
+    listSources: () => getConfig().then((cfg) => api(cfg, "/api/sources")),
+    addSource: () => getConfig().then((cfg) => api(cfg, "/api/sources", { method: "POST", body: { url: message.url } })),
+    removeSource: () => getConfig().then((cfg) => api(cfg, `/api/sources/${encodeURIComponent(message.id)}`, { method: "DELETE" })),
+    recentPostings: () => getConfig().then((cfg) => api(cfg, `/api/postings?limit=${Number(message.limit) || 20}`)),
     clear: () => chrome.storage.session.remove("lastRun"),
   };
   const handler = handlers[message && message.type];

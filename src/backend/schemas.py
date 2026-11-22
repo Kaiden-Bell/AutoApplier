@@ -225,3 +225,38 @@ class ProfileOut(BaseModel):
     criteria: Optional[Criteria] = None
     application_profile: Optional[ApplicationProfile] = None
     updated_at: Optional[datetime] = None
+
+
+# ---------- discovery ----------
+
+SourceKind = Literal["greenhouse", "lever", "ashby", "simplify"]
+
+
+class AddSourceRequest(BaseModel):
+    url: str = Field(..., min_length=1, max_length=2_000)
+
+
+class SourceOut(BaseModel):
+    id: int
+    kind: SourceKind
+    slug: str
+    name: str
+    last_polled_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+    baseline_done: bool
+    open_postings: int
+    new_postings_7d: int
+
+
+class PostingOut(BaseModel):
+    id: int
+    source_id: int
+    company: str
+    title: str
+    location: str
+    pay: str
+    apply_url: str
+    posted_at: Optional[datetime] = None
+    first_seen_at: datetime
+    closed_at: Optional[datetime] = None
+
