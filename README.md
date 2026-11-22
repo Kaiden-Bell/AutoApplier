@@ -39,7 +39,8 @@ Keep `AUTOAPPLIER_DATA_KEY` safe. Stored CVs and profiles can't be decrypted wit
    - Paste your account token and click **Test connection**.
    - Paste your master CV, or load a `.txt`, `.tex` or `.md` file, and click **Save CV**. Check the sections it finds and fix any wrong type, for example a job marked as a project.
    - Add the email address for job notifications, and adjust your criteria. Your CV sections, criteria and email are also saved to your backend profile, where automatic discovery will use them.
-   - Under **Job watchlist**, add company boards (Greenhouse, Lever or Ashby URLs) or a SimplifyJobs list. The worker checks them about every 15 minutes. Jobs already open when you add a board are skipped, and new ones appear under **Recently found**. Matching, tailoring and emailing them come in the next phases.
+   - Under **Job watchlist**, add company boards (Greenhouse, Lever or Ashby URLs) or a SimplifyJobs list. The worker checks them about every 15 minutes. Jobs already open when you add a board are skipped, and new ones appear under **Recently found**.
+   - Turn on **Automatically tailor new jobs that pass my criteria**. Each new job is checked against your criteria, which is free. Jobs that pass get a tailored resume, up to your daily limit (default 20; the operator sets it with `python -m backend.admin set-cap <id> <n>`). Tailored jobs appear in the popup's **Inbox**, where you can download the PDF, open the posting, and approve or skip it. Emailing them comes in the next phase.
 
 ### 3. Use it
 
@@ -89,6 +90,7 @@ Backend environment variables (see `.env.example`):
 | `AUTOAPPLIER_COMPILE_TIMEOUT` | `30` | Hard `pdflatex` time limit in seconds. |
 | `AUTOAPPLIER_POLL_INTERVAL` | `900` | Seconds between checks of each watched board (±10% jitter; failures back off up to 6 h). |
 | `AUTOAPPLIER_WORKER_TICK` | `30` | Seconds between discovery-worker wake-ups. |
+| `AUTOAPPLIER_TASK_THREADS` | `2` | Worker threads that match and tailor new postings. Polling runs on its own thread. |
 | `AUTOAPPLIER_HOST_RATE` | `30` | Most requests per minute to one host. Every board on an ATS shares its host, so this caps total load on, say, Greenhouse. |
 
 Criteria fields (set in the extension; defaults in `src/backend/criteria.json`):
@@ -107,6 +109,8 @@ All `/api` routes require an account token in the `X-AutoApplier-Key` header. Re
 - `GET /api/profile` returns `{notify_email, master_cv, criteria, application_profile, updated_at}`. `PATCH /api/profile` updates the fields present in the body; `null` clears one. The email, CV and application profile are encrypted at rest.
 - `GET /api/sources` lists the account's watchlist with status (`last_polled_at`, `last_error`, `open_postings`, `new_postings_7d`). `POST /api/sources {url}` adds a Greenhouse, Lever or Ashby board, or a SimplifyJobs list, detected from any board, job, embed or API URL. It returns `422` for unsupported URLs or unknown boards. `DELETE /api/sources/{id}` removes one.
 - `GET /api/postings?limit=` lists new postings from the watchlist, one per job even when two sources report it.
+- `PATCH /api/account {automation_enabled}` turns automatic tailoring on or off. The daily cap is operator-only.
+- `GET /api/matches?state=&limit=` lists the account's matches with posting details. By default it lists everything except criteria rejections; `state` takes a comma-separated list. `GET /api/matches/{id}/resume` returns `{latex_source, resume_pdf_base64}`. `POST /api/matches/{id}/decision {decision: approve|skip}` records a decision, and `POST /api/matches/{id}/retry` re-queues a failed one. An invalid state change returns `409`.
 - `POST /api/cv/parse` takes `{resume_text}` and returns `202 {request_id}`. The finished result is `{master_cv, unmatched_bullets}`. `master_cv` is `{contact, sections: [{id, heading, kind, entries: [{id, title, organization, dates, location, tech, bullets: [{id, text}]}]}]}`. `unmatched_bullets` lists parsed lines that don't appear word for word in the text.
 - `POST /api/tailor` takes `{job: {title, location, pay, description, url?}, master_cv, criteria?}`, plus an optional `Idempotency-Key` header. IDs in `master_cv` are reassigned from position on the server.
   - A criteria rejection returns `200` with the finished result immediately.
@@ -167,7 +171,8 @@ src/backend/               FastAPI app: main, pipeline (tailor/parse), schemas, 
                            latex_guard, page_fit, compile_adapter, jobs, security, config
 src/backend/               accounts (tokens, profile), models + db (SQLAlchemy), crypto (AES-GCM),
                            admin (operator CLI), migrations/ (Alembic)
-src/backend/               discovery (watchlist, polling), worker (background loop),
+src/backend/               discovery (watchlist, polling), worker (poll + task threads),
+                           matching (match states, criteria → tailoring, cleanup), tasks (queue),
                            sources/ (greenhouse, lever, ashby, simplify adapters, JSON-LD, enrich)
 src/backend/{auth,credits,billing}.py   placeholders for planned phases
 docker-compose.yml         API + discovery worker + Postgres

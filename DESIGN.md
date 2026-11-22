@@ -655,8 +655,32 @@ Target workflow:
     (Supabase, PgBouncer) work. The API and worker still need an always-on host for `pdflatex`
     and the polling loop. Per-user decisions (shown, approved, skipped, applied) belong in Phase C's
     `matches` and never trigger board fetches.
-- [ ] **C. Automatic match and tailor:** a Postgres task queue (`FOR UPDATE SKIP LOCKED`),
-  per-account criteria gate, daily LLM cap, stored results, and a popup inbox.
+- [x] **C. Automatic match and tailor** (2026-11-22).
+  - **Task queue** (`tasks.py`): tasks are enqueued in the caller's transaction, so polling saves
+    a posting and its `match_posting` task together. They are claimed with `FOR UPDATE SKIP
+    LOCKED` and a lease, and keys make enqueueing idempotent. Failures back off exponentially
+    until `max_attempts`, then the task is marked dead. `Retry` reschedules without counting an
+    attempt.
+  - **Matching** (`matching.py`): a match is made for accounts with automation on, a CV and
+    criteria. It is skipped if the account already has the job from another source
+    (`uq_matches_account_dedupe`). Criteria failures are recorded as `criteria_rejected` without
+    an LLM call.
+  - **Tailoring:**
+    - The daily cap is checked under a row lock on the account. Over the cap, the match is
+      `deferred` until 00:00 UTC.
+    - Missing descriptions are fetched once onto the shared posting.
+    - `pipeline.tailor` produces `ready` (PDF stored), `llm_rejected` or `failed`.
+    - LLM errors are not retried (§8.4), and a match interrupted mid-tailoring resumes.
+  - **State machine:** the match state machine covers Phases D and E as well; `transition()`
+    rejects invalid moves.
+  - **Worker:** one polling thread, plus `AUTOAPPLIER_TASK_THREADS` task threads and an hourly
+    cleanup. The cleanup deletes rejected or skipped matches after 30 days, dead tasks after 7, and
+    closed postings after 30 days unless a match still uses them.
+  - **API and extension:** `PATCH /api/account` and `/api/matches` (list, resume, decision,
+    retry). A popup Inbox, and an automation switch in Settings.
+  - **Not yet moved:** the manual `/api/tailor` and `/api/cv/parse` requests still use the
+    in-memory request store. Moving them onto the task queue would let the API run as several
+    instances; that is still to do.
 - [ ] **D. Email approval:** SMTP mailer, one email per match with the PDF, single-use expiring
   tokens, and a GET confirm page with the decision as a POST.
 - [ ] **E. Assisted apply:** ATS form fillers in the extension, application profile UI, resume

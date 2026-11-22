@@ -260,3 +260,38 @@ class PostingOut(BaseModel):
     first_seen_at: datetime
     closed_at: Optional[datetime] = None
 
+
+# ---------- matches ----------
+
+class AccountUpdate(BaseModel):
+    """PATCH /api/account. The daily LLM cap is operator-controlled (backend.admin)."""
+    automation_enabled: Optional[bool] = None
+
+
+class MatchOut(BaseModel):
+    id: int
+    state: str
+    reason: str
+    gap_analysis: str
+    selection_notes: list[str] = Field(default_factory=list)
+    page_count: int
+    has_resume: bool
+    created_at: datetime
+    updated_at: datetime
+    posting_id: int
+    title: str
+    company: str
+    location: str
+    pay: str
+    apply_url: str
+    posting_closed: bool
+
+
+class MatchResume(BaseModel):
+    latex_source: str
+    resume_pdf_base64: str
+
+
+class DecisionRequest(BaseModel):
+    decision: Literal["approve", "skip"]
+

@@ -3,7 +3,8 @@
     tests/test_db.py fails if the models and migrations drift apart.
 
     Phase A: accounts and profiles. Phase B: sources (job boards and lists), each account's
-    watchlist, and the postings found. Matches and the task queue arrive with Phase C.
+    watchlist, and the postings found. Phase C: matches (one account's view of one job) and the
+    task queue the worker runs.
 """
 
 from datetime import datetime, timezone
@@ -126,3 +127,59 @@ class Posting(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_baseline: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Match(Base):
+    """
+        One account's record of one job: whether it passed their criteria, the tailored resume,
+        and their decision. States and allowed transitions live in matching.py.
+    """
+    __tablename__ = "matches"
+    __table_args__ = (
+        # A job reported by two watched sources is matched once per account.
+        UniqueConstraint("account_id", "dedupe_key", name="uq_matches_account_dedupe"),
+        Index("ix_matches_account_state", "account_id", "state"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"))
+    posting_id: Mapped[int] = mapped_column(ForeignKey("postings.id", ondelete="CASCADE"), index=True)
+    dedupe_key: Mapped[str] = mapped_column(String(1000))
+    state: Mapped[str] = mapped_column(String(30))
+    # Criteria rejection reason, failure message, or other status detail for the user.
+    reason: Mapped[str] = mapped_column(Text, default="")
+    gap_analysis: Mapped[str] = mapped_column(Text, default="")
+    selection_notes_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    latex_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pdf: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    page_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Set when tailoring first starts; counts toward the account's daily LLM cap.
+    tailor_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True,
+                                                                index=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow,
+                                                 onupdate=utcnow)
+
+
+class Task(Base):
+    """
+        A unit of background work (tasks.py). Claimed with FOR UPDATE SKIP LOCKED and a lease, so
+        a crashed worker's task is picked up again once its lease expires.
+    """
+    __tablename__ = "tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(40))
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    # Optional idempotency key: enqueueing a key that is already queued does nothing.
+    key: Mapped[str | None] = mapped_column(String(200), nullable=True, unique=True)
+    run_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=5)
+    # Set when the task gave up; dead tasks are kept briefly for inspection, then cleaned up.
+    dead: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+

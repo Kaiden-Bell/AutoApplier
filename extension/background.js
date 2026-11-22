@@ -30,6 +30,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     listSources: () => getConfig().then((cfg) => api(cfg, "/api/sources")),
     addSource: () => getConfig().then((cfg) => api(cfg, "/api/sources", { method: "POST", body: { url: message.url } })),
     removeSource: () => getConfig().then((cfg) => api(cfg, `/api/sources/${encodeURIComponent(message.id)}`, { method: "DELETE" })),
+    me: () => getConfig().then((cfg) => api(cfg, "/api/me")),
+    setAutomation: () => getConfig().then((cfg) => api(cfg, "/api/account", { method: "PATCH", body: { automation_enabled: !!message.enabled } })),
+    listMatches: () => getConfig().then((cfg) => api(cfg, `/api/matches?limit=${Number(message.limit) || 20}`)),
+    decideMatch: () => getConfig().then((cfg) => api(cfg, `/api/matches/${encodeURIComponent(message.id)}/decision`, { method: "POST", body: { decision: message.decision } })),
+    retryMatch: () => getConfig().then((cfg) => api(cfg, `/api/matches/${encodeURIComponent(message.id)}/retry`, { method: "POST" })),
+    downloadMatch: () => downloadMatchResume(message.id, message.title),
     recentPostings: () => getConfig().then((cfg) => api(cfg, `/api/postings?limit=${Number(message.limit) || 20}`)),
     clear: () => chrome.storage.session.remove("lastRun"),
   };
@@ -317,6 +323,17 @@ function downloadPdf(run) {
   return chrome.downloads.download({
     url: "data:application/pdf;base64," + run.result.resume_pdf_base64,
     filename: `AutoApplier/Resume - ${safeName(run.job.title)}.pdf`,
+    conflictAction: "uniquify",
+  });
+}
+
+async function downloadMatchResume(id, title) {
+  const cfg = await getConfig();
+  const resume = await api(cfg, `/api/matches/${encodeURIComponent(id)}/resume`);
+  if (!resume.resume_pdf_base64) throw new Error("This match has no PDF.");
+  return chrome.downloads.download({
+    url: "data:application/pdf;base64," + resume.resume_pdf_base64,
+    filename: `AutoApplier/Resume - ${safeName(title)}.pdf`,
     conflictAction: "uniquify",
   });
 }

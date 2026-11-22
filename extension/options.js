@@ -278,9 +278,31 @@ function sourceStatus(s) {
 
 const KIND_LABELS = { greenhouse: "Greenhouse", lever: "Lever", ashby: "Ashby", simplify: "SimplifyJobs list" };
 
+async function loadAutomation() {
+  try {
+    const me = await send({ type: "me" });
+    $("automation").checked = !!me.automation_enabled;
+    $("automation-cap").textContent = `— up to ${me.daily_llm_cap} per day`;
+  } catch (e) {
+    $("automation").disabled = true;
+  }
+}
+
+async function setAutomation() {
+  const enabled = $("automation").checked;
+  try {
+    await send({ type: "setAutomation", enabled });
+    setStatus("sources-status", "ok", enabled ? "Automatic tailoring is on." : "Automatic tailoring is off.");
+  } catch (e) {
+    $("automation").checked = !enabled;
+    setStatus("sources-status", "err", e.message);
+  }
+}
+
 async function loadWatchlist() {
   const local = await chrome.storage.local.get("apiKey");
   if (!local.apiKey) return;
+  loadAutomation();
   try {
     const [list, recent] = await Promise.all([send({ type: "listSources" }), send({ type: "recentPostings", limit: 15 })]);
     renderSources(list);
@@ -406,6 +428,7 @@ async function init() {
   $("save-criteria").addEventListener("click", saveCriteria);
   $("save-notify").addEventListener("click", saveNotifyEmail);
   $("add-source").addEventListener("click", () => addSource($("source-url").value));
+  $("automation").addEventListener("change", setAutomation);
   $("source-url").addEventListener("keydown", (e) => e.key === "Enter" && addSource($("source-url").value));
   Object.entries(SIMPLIFY_LISTS).forEach(([id, url]) => $(id).addEventListener("click", () => addSource(url)));
   $("reset-criteria").addEventListener("click", resetCriteria);

@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import exists, func, or_, select
 
-from . import sources
+from . import matching, sources
 from .models import AccountSource, Posting, Source, utcnow
 from .sources.base import normalize_url
 from .sources.http import RateLimited
@@ -199,6 +199,8 @@ def poll_source(db, http, claimed, interval, now=None):
         if source is None:
             return PollOutcome(claimed.id, error="source was deleted")
         outcome = apply_fetch(session, source, result, now)
+        # Same transaction as the inserts: a saved posting always has its matching task.
+        matching.enqueue_new_postings(session, outcome.new_posting_ids)
         source.next_poll_at = now + _jittered(adaptive_interval(interval, source.last_changed_at, now))
         return outcome
 

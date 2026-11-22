@@ -30,6 +30,9 @@ def main(argv=None, database=None, out=sys.stdout):
     rotate = sub.add_parser("rotate-token", help="replace an account's API token")
     rotate.add_argument("account_id", type=int)
     sub.add_parser("list-accounts")
+    cap = sub.add_parser("set-cap", help="set an account's daily limit of tailored resumes")
+    cap.add_argument("account_id", type=int)
+    cap.add_argument("cap", type=int)
     args = parser.parse_args(argv)
 
     if args.command == "gen-key":
@@ -54,7 +57,15 @@ def main(argv=None, database=None, out=sys.stdout):
         elif args.command == "list-accounts":
             for account in session.scalars(select(Account).order_by(Account.id)):
                 flags = " (disabled)" if account.disabled else ""
-                print(f"{account.id}\t{account.label}\tcap={account.daily_llm_cap}{flags}", file=out)
+                auto = " automation=on" if account.automation_enabled else ""
+                print(f"{account.id}\t{account.label}\tcap={account.daily_llm_cap}{auto}{flags}", file=out)
+        elif args.command == "set-cap":
+            account = session.get(Account, args.account_id)
+            if account is None:
+                print(f"No account {args.account_id}.", file=sys.stderr)
+                return 1
+            account.daily_llm_cap = max(0, args.cap)
+            print(f"Account {account.id} may tailor {account.daily_llm_cap} resumes per day.", file=out)
     return 0
 
 

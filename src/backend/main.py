@@ -5,7 +5,9 @@
         PYTHONPATH=src uvicorn backend.main:app --port 2005 --workers 1
 """
 
+import base64
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -15,14 +17,16 @@ from typing import Optional
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import accounts, crypto, discovery, pipeline, sources
+from . import accounts, crypto, discovery, matching, pipeline, sources
 from .config import Settings, load_default_criteria
 from .criteria_matcher import eval_job_criteria
 from .db import Database
 from .jobs import IdempotencyConflict, JobStore
+from .models import Account
 from .schemas import (
-    AccountOut, AddSourceRequest, CVParseRequest, PostingOut, ProfileOut, ProfileUpdate,
-    RequestStatus, SourceOut, TailorRequest, TailorResult,
+    AccountOut, AccountUpdate, AddSourceRequest, CVParseRequest, DecisionRequest, MatchOut,
+    MatchResume, PostingOut, ProfileOut, ProfileUpdate, RequestStatus, SourceOut, TailorRequest,
+    TailorResult,
 )
 from .sources.http import HttpClient
 from .security import RateLimiter, make_account_dependency
@@ -97,6 +101,16 @@ def create_app(settings: Optional[Settings] = None, database: Optional[Database]
         return AccountOut(id=account.id, label=account.label, daily_llm_cap=account.daily_llm_cap,
                           automation_enabled=account.automation_enabled)
 
+    @app.patch("/api/account")
+    def update_account(update: AccountUpdate,
+                       account: accounts.AccountInfo = Depends(require_account)) -> AccountOut:
+        with database.session() as session:
+            row = session.get(Account, account.id)
+            if update.automation_enabled is not None:
+                row.automation_enabled = update.automation_enabled
+            return AccountOut(id=row.id, label=row.label, daily_llm_cap=row.daily_llm_cap,
+                              automation_enabled=row.automation_enabled)
+
     @app.get("/api/profile")
     def get_profile(account: accounts.AccountInfo = Depends(require_account)) -> ProfileOut:
         key = data_key()
@@ -151,6 +165,65 @@ def create_app(settings: Optional[Settings] = None, database: Optional[Database]
         with database.session() as session:
             rows = discovery.recent_postings(session, account.id, limit)
             return [PostingOut.model_validate(r, from_attributes=True) for r in rows]
+
+    def match_out(match, posting):
+        return MatchOut(
+            id=match.id, state=match.state, reason=match.reason or "",
+            gap_analysis=match.gap_analysis or "",
+            selection_notes=json.loads(match.selection_notes_json or "[]"),
+            page_count=match.page_count or 0, has_resume=match.pdf is not None,
+            created_at=match.created_at, updated_at=match.updated_at, posting_id=posting.id,
+            title=posting.title, company=posting.company, location=posting.location,
+            pay=posting.pay, apply_url=posting.apply_url,
+            posting_closed=posting.closed_at is not None,
+        )
+
+    @app.get("/api/matches")
+    def list_matches(state: Optional[str] = None, limit: int = 50,
+                     account: accounts.AccountInfo = Depends(require_account)) -> list[MatchOut]:
+        states = None
+        if state:
+            states = {s.strip() for s in state.split(",") if s.strip()}
+            unknown = states - matching.STATES
+            if unknown:
+                raise HTTPException(422, f"Unknown state(s): {', '.join(sorted(unknown))}")
+        with database.session() as session:
+            rows = matching.list_matches(session, account.id, states, max(1, min(limit, 200)))
+            return [match_out(m, p) for m, p in rows]
+
+    @app.get("/api/matches/{match_id}/resume")
+    def match_resume(match_id: int,
+                     account: accounts.AccountInfo = Depends(require_account)) -> MatchResume:
+        with database.session() as session:
+            match = matching.get_match(session, account.id, match_id)
+            if match is None or (match.pdf is None and not match.latex_source):
+                raise HTTPException(404, "No resume for that match.")
+            return MatchResume(latex_source=match.latex_source or "",
+                               resume_pdf_base64=base64.b64encode(match.pdf).decode("ascii")
+                               if match.pdf else "")
+
+    def act_on_match(account, match_id, action):
+        try:
+            with database.session() as session:
+                match = action(session)
+                posting = session.get(matching.Posting, match.posting_id)
+                return match_out(match, posting)
+        except LookupError:
+            raise HTTPException(404, "No such match.")
+        except matching.InvalidTransition as e:
+            raise HTTPException(409, str(e))
+
+    @app.post("/api/matches/{match_id}/decision")
+    def decide(match_id: int, req: DecisionRequest,
+               account: accounts.AccountInfo = Depends(require_account)) -> MatchOut:
+        return act_on_match(account, match_id,
+                            lambda s: matching.decide(s, account.id, match_id, req.decision))
+
+    @app.post("/api/matches/{match_id}/retry")
+    def retry_match(match_id: int,
+                    account: accounts.AccountInfo = Depends(require_account)) -> MatchOut:
+        return act_on_match(account, match_id,
+                            lambda s: matching.retry(s, account.id, match_id))
 
     @app.post(
         "/api/tailor",

@@ -191,6 +191,68 @@ function renderRun(run) {
   }
 }
 
+// ---------- inbox ----------
+
+const STATE_LABELS = {
+  queued: "Waiting to be tailored", deferred: "Waiting (daily limit reached)", tailoring: "Tailoring…",
+  ready: "Resume ready", emailed: "Resume ready (emailed)", llm_rejected: "Not a strong match",
+  failed: "Failed", approved: "Approved", skipped: "Skipped", expired: "Expired",
+  applying: "Applying…", filled: "Filled — ready to submit", apply_failed: "Couldn't fill the form",
+  submitted: "Submitted",
+};
+const HIDDEN_IN_INBOX = new Set(["skipped", "expired"]);
+
+async function loadInbox() {
+  const { apiKey } = await chrome.storage.local.get("apiKey");
+  if (!apiKey) return;
+  let matches;
+  try {
+    matches = (await send({ type: "listMatches", limit: 25 })).filter((m) => !HIDDEN_IN_INBOX.has(m.state));
+  } catch (e) {
+    return; // the backend is unreachable; the setup banner and run status cover that
+  }
+  const ready = matches.filter((m) => m.state === "ready" || m.state === "emailed").length;
+  $("inbox").hidden = false;
+  $("inbox-summary").textContent = ready ? `Inbox — ${ready} ready for review` : `Inbox (${matches.length})`;
+  if (ready) $("inbox").open = true;
+  $("inbox-empty").hidden = matches.length > 0;
+  $("inbox-list").replaceChildren(...matches.map(renderMatch));
+}
+
+function renderMatch(m) {
+  const act = (label, fn, cls) => button(label, async (e) => {
+    e.target.disabled = true;
+    try {
+      await fn();
+      await loadInbox();
+    } catch (err) {
+      e.target.disabled = false;
+      e.target.title = err.message;
+      e.target.textContent = "Error — see tooltip";
+    }
+  }, cls);
+  const buttons = [];
+  if (m.has_resume) buttons.push(act("PDF", () => send({ type: "downloadMatch", id: m.id, title: m.title })));
+  if (/^https?:\/\//i.test(m.apply_url)) {
+    buttons.push(button("Open posting", () => chrome.tabs.create({ url: m.apply_url })));
+  }
+  if (m.state === "ready" || m.state === "emailed") {
+    buttons.push(act("Approve", () => send({ type: "decideMatch", id: m.id, decision: "approve" }), "primary"));
+  }
+  if (["ready", "emailed", "llm_rejected", "failed", "queued", "deferred"].includes(m.state)) {
+    buttons.push(act("Skip", () => send({ type: "decideMatch", id: m.id, decision: "skip" })));
+  }
+  if (m.state === "failed") buttons.push(act("Retry", () => send({ type: "retryMatch", id: m.id })));
+
+  const detail = m.state === "llm_rejected" ? m.gap_analysis : (m.state === "failed" || m.state === "deferred" ? m.reason : "");
+  return el("div", { cls: "match" }, [
+    el("div", { cls: "title", text: `${m.title} — ${m.company}` }),
+    el("div", { cls: "meta", text: [STATE_LABELS[m.state] || m.state, m.location, m.pay, m.posting_closed ? "posting closed" : ""].filter(Boolean).join(" · ") }),
+    detail ? el("div", { cls: "meta", text: detail.split("\n")[0].slice(0, 200) }) : null,
+    buttons.length ? el("div", { cls: "row" }, buttons) : null,
+  ]);
+}
+
 // ---------- init ----------
 
 async function init() {
@@ -206,6 +268,7 @@ async function init() {
 
   [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   checkSetup();
+  loadInbox();
 
   const run = await send({ type: "resume" }).catch(() => null);
   const { lastRun, draftJob } = await chrome.storage.session.get(["lastRun", "draftJob"]);

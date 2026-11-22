@@ -36,6 +36,9 @@ class Settings:
     # Discovery worker: how often each watched source is polled, and how often the worker wakes.
     poll_interval_seconds: int = field(default_factory=lambda: _int_env("AUTOAPPLIER_POLL_INTERVAL", 15 * 60))
     worker_tick_seconds: int = field(default_factory=lambda: _int_env("AUTOAPPLIER_WORKER_TICK", 30))
+    # Worker threads running queued tasks (matching, tailoring), and their idle wake-up interval.
+    task_threads: int = field(default_factory=lambda: _int_env("AUTOAPPLIER_TASK_THREADS", 2))
+    task_tick_seconds: int = field(default_factory=lambda: _int_env("AUTOAPPLIER_TASK_TICK", 5))
     # Most requests per minute to any one host (all Greenhouse boards share one host, for example).
     host_requests_per_minute: int = field(default_factory=lambda: _int_env("AUTOAPPLIER_HOST_RATE", 30))
 
